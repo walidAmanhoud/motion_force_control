@@ -97,7 +97,6 @@ class UnifiedMotionForceController
 		Eigen::Vector3f _attractorPosition;				// Current position [m] (3x1)
 		Eigen::Vector3f _taskAttractor;
     Eigen::Vector3f _planeNormal;
-    Eigen::Vector3f _planeTangent;
     Eigen::Vector3f _p;
     Eigen::Vector3f _xp;		
     Eigen::Vector3f _xa;		
@@ -108,8 +107,7 @@ class UnifiedMotionForceController
     float _convergenceRate;       // Convergence rate of the DS
     float _k1;
     float _k2;
-    float _fc;
-		Eigen::Vector3f _contactForce;
+		Eigen::Vector3f _Fc;
 		float _minFc;
 		float _maxFc;
 		

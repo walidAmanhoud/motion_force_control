@@ -28,11 +28,9 @@ UnifiedMotionForceController::UnifiedMotionForceController(ros::NodeHandle &n, d
   _taskAttractor << -0.6f, -0.3f, 0.186f;
   
   _planeNormal << 0.0f, 0.0f, 1.0f;
-  _planeTangent << 0.0f, -1.0f, 0.0f;
   _p << 0.0f,0.0f,0.186f;
 
-  _contactForce.setConstant(0.0f);
-  _fc = 0.0f;
+  _Fc.setConstant(0.0f);
   _minFc = 0.0f;
   _maxFc = 0.0f;
 
@@ -178,7 +176,7 @@ void UnifiedMotionForceController::run()
   _vd.setConstant(0.0f);
   _omegad.setConstant(0.0f);
   _qd = _q;
-  _contactForce.setConstant(0.0f);
+  _Fc.setConstant(0.0f);
 
   publishData();
   ros::spinOnce();
@@ -202,9 +200,9 @@ void  UnifiedMotionForceController::autonomousControl()
 {
   
   // Extract linear speed, force and torque data
-  Eigen::Vector3f vcur = _twist.segment(0,3);
-  Eigen::Vector3f force = _filteredWrench.segment(0,3);  
-  Eigen::Vector3f torque = _filteredWrench.segment(3,3);
+  Eigen::Vector3f v = _twist.segment(0,3);
+  Eigen::Vector3f F = _filteredWrench.segment(0,3);  
+  Eigen::Vector3f T = _filteredWrench.segment(3,3);
 
   // Compute plane normal form markers position
   _p1 = _plane1Position-_robotBasisPosition;
@@ -216,102 +214,102 @@ void  UnifiedMotionForceController::autonomousControl()
   p13 /= p13.norm();
   p12 /= p12.norm();
   _planeNormal = p13.cross(p12);
-  std::cerr << "plane normal: " << _planeNormal.transpose() << std::endl;
 
-  // Compute projected force and speed along plane normal
-  Eigen::Vector3f fn = (_planeNormal*_planeNormal.transpose())*(_wRb*force);
-  Eigen::Vector3f vn = (_planeNormal*_planeNormal.transpose())*vcur;
+  // Compute canonical basis used to decompose the desired dynamics along the plane frame
+  // D = [e1 e2 e3] with e1 = -n while e2 and e3 are orthogonal to e1
+  Eigen::Vector3f temp;
+  temp << 1.0f,0.0f,0.0f;
+  Eigen::Matrix3f B, S;
+  Eigen::Vector3f e1, e2, e3;
+  e1 = -_planeNormal;
+  S = e1*e1.transpose();
+  e2 = (Eigen::Matrix3f::Identity()-S)*temp;
+  e2 = e2/(e2.norm());
+  e3 = e1.cross(e2);
+  B.col(0) = e1;
+  B.col(1) = e2;
+  B.col(2) = e3;
 
-  // Compute norm of the projected force along plane normal
-  _forceNorm = fn.norm();
+  // Compute normal distance to the plane
+  float normalDistance = (S*(_x-_xp)).norm();
+
+  // Compute Weighted diagonal matrix
+  Eigen::Matrix3f L = Eigen::Matrix3f::Zero();
+  L(0,0) = _convergenceRate*(1-std::tanh(10*normalDistance));
+  // L(0,0) = _convergenceRate*std::tanh(50*normalDistance);
+  // L(0,0) = _convergenceRate;
+  L(1,1) = _convergenceRate*(1-std::tanh(50*normalDistance));
+  L(2,2) = _convergenceRate*(1-std::tanh(50*normalDistance));
 
   // Compute vertical projection of the current position onto the plane
   _xp = _x;
   _xp(2) = (-_planeNormal(0)*(_xp(0)-_p3(0))-_planeNormal(1)*(_xp(1)-_p3(1))+_planeNormal(2)*_p3(2))/_planeNormal(2);
   // _xp(2) = (-_planeNormal(0)*(_xp(0)-_p(0))-_planeNormal(1)*(_xp(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
 
-  // Compute normal distance to the plane
-  float normalDistance = (_planeNormal*_planeNormal.transpose()*(_x-_xp)).norm();
-
-  // Compute canonical basis used to decompose the desired dynamics along the plane frame
-  // D = [e1 e2 e3] with e1 = -n and e2,e3 are orthogonal to e1
-  Eigen::Vector3f temp;
-  temp << 1.0f,0.0f,0.0f;
-  Eigen::Matrix3f B;
-  B.col(0) = -_planeNormal;
-  B.col(1) = (Eigen::Matrix3f::Identity()-_planeNormal*_planeNormal.transpose())*temp;
-  B.col(1) = B.col(1)/(B.col(1).norm());
-  B.col(2) = (B.col(0)).cross(B.col(1));
-
-  // Compute Weighted diagonal matrix
-  Eigen::Matrix3f L = Eigen::Matrix3f::Zero();
-  L(0,0) = _convergenceRate*(1-std::tanh(10*normalDistance));
-  // L(0,0) = 1.0f;
-  L(1,1) = _convergenceRate*(1-std::tanh(50*normalDistance));
-  L(2,2) = _convergenceRate*(1-std::tanh(50*normalDistance));
-
-  std::cerr << "normalDistance: " << normalDistance << " L: "<< L.diagonal().transpose() << std::endl;
-
   // Compute fixed attractor on plane
-  _xa = _p1+0.7*(_p2-_p1)+0.5*(_p3-_p1);
+  _xa = _p1+0.8*(_p2-_p1)+0.5*(_p3-_p1);
   _xa(2) = (-_planeNormal(0)*(_xa(0)-_p1(0))-_planeNormal(1)*(_xa(1)-_p1(1))+_planeNormal(2)*_p1(2))/_planeNormal(2);
 
+
+  Eigen::Vector3f xs;
+  xs = _p1+0.05*(_p2-_p1)+0.5*(_p3-_p1);
   // _xa = _taskAttractor;
   // _xa(2) = (-_planeNormal(0)*(_xa(0)-_p(0))-_planeNormal(1)*(_xa(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
-
   std::cerr << "xa: " << _xa.transpose() << std::endl;
 
-
-  // Check if polishing motion is activated and compute desired velocity based on motion dynamics
-  // = sum of linear dynamics coming from moving and fixed attractors
-
-  if(_polishing)
+  // Check if polishing motion is activated and compute desired velocity based on motion dynamics = sum of linear dynamics coming from moving and fixed attractors
+  if(_polishing && !_linear)
   {
-    _vd = (B*L*B.transpose())*((_xp-_x)+(Eigen::Matrix3f::Identity()-B.col(0)*B.col(0).transpose())*getDesiredVelocity(_x,_xa));
-    // _vd = (B*L*B.transpose())*((_xp-_x)+(Eigen::Matrix3f::Identity()-B.col(0)*B.col(0).transpose())*getDesiredVelocity(_x,_xa)-_xf*_planeNormal);
+    _vd = (B*L*B.transpose())*((_xp-_x)+(Eigen::Matrix3f::Identity()-S)*getDesiredVelocity(_x,_xa));
+    // _vd = std::tanh(50*normalDistance)*(xs-_x)+_convergenceRate*(1-std::tanh(50*normalDistance))*(Eigen::Matrix3f::Identity()-S)*getDesiredVelocity(_x,_xa);
+
   }
-  else if(_linear)
+  else if(_linear && !_polishing)
   {
-    _vd = (B*L*B.transpose())*((_xp-_x)+(Eigen::Matrix3f::Identity()-B.col(0)*B.col(0).transpose())*(_xa-_x));
+    _vd = (B*L*B.transpose())*((_xp-_x)+(Eigen::Matrix3f::Identity()-S)*(_xa-_x));
+    // _vd = std::tanh(50*normalDistance)*(xs-_x)+_convergenceRate*(1-std::tanh(50*normalDistance))*(Eigen::Matrix3f::Identity()-S)*(_xa-_x);
   }
   else
   {
-    _vd = (B*L*B.transpose())*((_xp-_x));
+    _vd = (B*L*B.transpose())*(_xp-_x);
+    // _vd = std::tanh(50*normalDistance)*(xs-_x);
   }
+
+  // Compute projected force and speed along plane normal
+  Eigen::Vector3f Fn = S*(-_wRb*F);
+  Eigen::Vector3f vn = S*v;
+
+  // Compute desired force along surface normal
+  Eigen::Vector3f Fd = _targetForce*e1;
 
   // Check if force control activated and compute contact force following the specified dynamics
   if(_controlForce)
   {
     // Compute force error
-    float error = _targetForce-_forceNorm;
+    Eigen::Vector3f Fe = Fd-Fn;
     
     // Compute force stiffness rate gain from measured speed
     float alpha = 1-std::tanh(50*vn.norm());
 
     // Integrate contact force magnitude dynamics
-    _fc += _dt*(_k1*alpha*error-_k2*(1-alpha)*_targetForce);
+    _Fc += _dt*(_k1*alpha*Fe-_k2*(1-alpha)*Fd);
 
-
-    float gamma = std::tanh(0.4*_forceNorm);
-    if(_fc < _minFc*alpha)
+    if(_Fc.dot(e1) < _minFc*alpha)
     {
-      _fc = _minFc*alpha;
+      _Fc = _minFc*alpha*e1;
     }
-    else if(_fc > _maxFc)
+    else if(_Fc.dot(e1) > _maxFc)
     {
-      _fc = _maxFc;
+      _Fc = _maxFc*e1;
     }
 
-    std::cerr << "alpha: " << alpha << " fc: " << _fc << " vn: " << vn.norm() << std::endl;
+    std::cerr << "contact force: " << _Fc.transpose() << " fc: " << _Fc.norm() << " vn: " << vn.norm() << std::endl;
   }
   else
   {
-    _fc = 0.0f;
-    _contactForce.setConstant(0.0f);
+    _Fc.setConstant(0.0f);
   }
 
-  // Compute contact force from magnitude and normal plane direction
-  _contactForce = _fc*B.col(0);
 
   // Bound desired velocity  
   if(_vd.norm()>0.3f)
@@ -345,171 +343,13 @@ void  UnifiedMotionForceController::autonomousControl()
   _qd = slerpQuaternion(_q,qf,1-std::tanh(5*normalDistance));
 
   // Compute needed angular velocity to perform the desired quaternion
-  Eigen::Vector4f qI, wq;
-  qI(0) = _q(0);
-  qI.segment(1,3) = -_q.segment(1,3);
-  wq = 5.0f*quaternionProduct(qI,_qd-_q);
+  Eigen::Vector4f qcurI, wq;
+  qcurI(0) = _q(0);
+  qcurI.segment(1,3) = -_q.segment(1,3);
+  wq = 5.0f*quaternionProduct(qcurI,_qd-_q);
   Eigen::Vector3f omegaTemp = _wRb*wq.segment(1,3);
   _omegad = omegaTemp;
 }
-
-// void  UnifiedMotionForceController::autonomousControl()
-// {
-  
-//   // Extract linear speed, force and torque data
-//   Eigen::Vector3f vcur = _twist.segment(0,3);
-//   Eigen::Vector3f force = _filteredWrench.segment(0,3);  
-//   Eigen::Vector3f torque = _filteredWrench.segment(3,3);
-
-//   // Compute plane normal form markers position
-//   _p1 = _plane1Position-_robotBasisPosition;
-//   _p2 = _plane2Position-_robotBasisPosition;
-//   _p3 = _plane3Position-_robotBasisPosition;
-//   Eigen::Vector3f p13,p12;
-//   p13 = _p3-_p1;
-//   p12 = _p2-_p1;
-//   p13 /= p13.norm();
-//   p12 /= p12.norm();
-//   _planeNormal = p13.cross(p12);
-//   std::cerr << "plane normal: " << _planeNormal.transpose() << std::endl;
-
-//   // Compute projected force and speed along plane normal
-//   Eigen::Vector3f fn = (_planeNormal*_planeNormal.transpose())*(_wRb*force);
-//   Eigen::Vector3f vn = (_planeNormal*_planeNormal.transpose())*vcur;
-
-//   // Compute norm of the projected force along plane normal
-//   _forceNorm = fn.norm();
-
-//   // Compute vertical projection of the current position onto the plane
-//   _xp = _x;
-//   _xp(2) = (-_planeNormal(0)*(_xp(0)-_p3(0))-_planeNormal(1)*(_xp(1)-_p3(1))+_planeNormal(2)*_p3(2))/_planeNormal(2);
-//   // _xp(2) = (-_planeNormal(0)*(_xp(0)-_p(0))-_planeNormal(1)*(_xp(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
-
-//   // Compute normal distance to the plane
-//   float normalDistance = (_planeNormal*_planeNormal.transpose()*(_x-_xp)).norm();
-
-//   // Compute canonical basis used to decompose the desired dynamics along the plane frame
-//   // D = [e1 e2 e3] with e1 = -n while e2 and e3 are orthogonal to e1
-//   Eigen::Vector3f temp;
-//   temp << 1.0f,0.0f,0.0f;
-//   Eigen::Matrix3f B;
-//   Eigen::Vector3f e1, e2, e3;
-//   e1 = -_planeNormal;
-//   e2 = (Eigen::Matrix3f::Identity()-_planeNormal*_planeNormal.transpose())*temp;
-//   e2 = B.col(1)/(B.col(1).norm());
-//   e3 = (B.col(0)).cross(B.col(1));
-//   B.col(0) = e1;
-//   B.col(1) = e2;
-//   B.col(2) = e3;
-
-//   // Compute Weighted diagonal matrix
-//   Eigen::Matrix3f L = Eigen::Matrix3f::Zero();
-//   L(0,0) = _convergenceRate*(1-std::tanh(10*normalDistance));
-//   // L(0,0) = 1.0f;
-//   L(1,1) = _convergenceRate*(1-std::tanh(50*normalDistance));
-//   L(2,2) = _convergenceRate*(1-std::tanh(50*normalDistance));
-
-//   std::cerr << "normalDistance: " << normalDistance << " L: "<< L.diagonal().transpose() << std::endl;
-
-//   // Compute fixed attractor on plane
-//   _xa = _p1+0.7*(_p2-_p1)+0.5*(_p3-_p1);
-//   _xa(2) = (-_planeNormal(0)*(_xa(0)-_p1(0))-_planeNormal(1)*(_xa(1)-_p1(1))+_planeNormal(2)*_p1(2))/_planeNormal(2);
-
-//   // _xa = _taskAttractor;
-//   // _xa(2) = (-_planeNormal(0)*(_xa(0)-_p(0))-_planeNormal(1)*(_xa(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
-
-//   std::cerr << "xa: " << _xa.transpose() << std::endl;
-
-
-//   // Check if polishing motion is activated and compute desired velocity based on motion dynamics
-//   // = sum of linear dynamics coming from moving and fixed attractors
-
-//   if(_polishing)
-//   {
-//     _vd = (B*L*B.transpose())*((_xp-_x)+(Eigen::Matrix3f::Identity()-e1*e1.transpose())*getDesiredVelocity(_x,_xa));
-//     // _vd = (B*L*B.transpose())*((_xp-_x)+(Eigen::Matrix3f::Identity()-e1*e1.transpose())*getDesiredVelocity(_x,_xa)-_xf*_planeNormal);
-//   }
-//   else if(_linear)
-//   {
-//     _vd = (B*L*B.transpose())*((_xp-_x)+(Eigen::Matrix3f::Identity()-e1*e1.transpose())*(_xa-_x));
-//   }
-//   else
-//   {
-//     _vd = (B*L*B.transpose())*((_xp-_x));
-//   }
-
-//   // Check if force control activated and compute contact force following the specified dynamics
-
-//   Eigen::Vector3f Fd = _targetForce*e1;
-//   Eigen::Vector3f F = (_planeNormal*_planeNormal.transpose())*(-_wRb*force);
-
-//   if(_controlForce)
-//   {
-//     // Compute force error
-//     Eigen::Vector3f Fe = Fd-F;
-    
-//     // Compute force stiffness rate gain from measured speed
-//     float alpha = 1-std::tanh(50*vn.norm());
-
-//     // Integrate contact force magnitude dynamics
-//     _contactForce += _dt*(_k1*alpha*Fe-_k2*(1-alpha)*Fd);
-
-//     if(_contactForce.dot(e1) < _minFc*alpha)
-//     {
-//       _contactForce = _minFc*alpha*e1;
-//     }
-//     else if(_contactForce.dot(e1) > _maxFc)
-//     {
-//       _contactForce = _maxFc*e1;
-//     }
-
-//     std::cerr << "contact force: " << _contactForce.transpose() << " fc: " << _contactForce.norm() << " vn: " << vn.norm() << std::endl;
-//   }
-//   else
-//   {
-//     _contactForce.setConstant(0.0f);
-//   }
-
-
-//   // Bound desired velocity  
-//   if(_vd.norm()>0.3f)
-//   {
-//     _vd *= 0.3f/_vd.norm();
-//   }
-
-//   // Compute rotation error between current orientation and plane orientation using Rodrigues' law
-//   Eigen::Vector3f k;
-//   k = (-_wRb.col(2)).cross(_planeNormal);
-//   float c = (-_wRb.col(2)).transpose()*_planeNormal;  
-//   float s = k.norm();
-//   k /= s;
-//   Eigen::Matrix3f K;
-//   K << 0.0f, -k(2), k(1),
-//        k(2), 0.0f, -k(0),
-//        -k(1), k(0), 0.0f;
-
-//   Eigen::Matrix3f Re = Eigen::Matrix3f::Identity()+s*K+(1-c)*K*K;
-  
-//   // Convert rotation error into axis angle representation
-//   float angle;
-//   Eigen::Vector3f omega;
-//   Eigen::Vector4f qtemp = rotationMatrixToQuaternion(Re);
-//   quaternionToAxisAngle(qtemp,omega,angle);
-
-//   // Compute final quaternion on plane
-//   Eigen::Vector4f qf = quaternionProduct(qtemp,_q);
-
-//   // Perform quaternion slerp interpolation to progressively orient the end effector while approaching the plane
-//   _qd = slerpQuaternion(_q,qf,1-std::tanh(5*normalDistance));
-
-//   // Compute needed angular velocity to perform the desired quaternion
-//   Eigen::Vector4f qcurI, wq;
-//   qcurI(0) = _q(0);
-//   qcurI.segment(1,3) = -_q.segment(1,3);
-//   wq = 5.0f*quaternionProduct(qcurI,_qd-_q);
-//   Eigen::Vector3f omegaTemp = _wRb*wq.segment(1,3);
-//   _omegad = omegaTemp;
-// }
 
 
 void UnifiedMotionForceController::publishData()
@@ -595,9 +435,9 @@ void UnifiedMotionForceController::publishData()
   _pubFilteredWrench.publish(_msgFilteredWrench);
 
 
-  _msgDesiredWrench.force.x = _contactForce(0);
-  _msgDesiredWrench.force.y = _contactForce(1);
-  _msgDesiredWrench.force.z = _contactForce(2);
+  _msgDesiredWrench.force.x = _Fc(0);
+  _msgDesiredWrench.force.y = _Fc(1);
+  _msgDesiredWrench.force.z = _Fc(2);
   _msgDesiredWrench.torque.x = 0.0f;
   _msgDesiredWrench.torque.y = 0.0f;
   _msgDesiredWrench.torque.z = 0.0f;

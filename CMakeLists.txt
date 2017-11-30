@@ -15,10 +15,10 @@ find_package(catkin REQUIRED COMPONENTS
   dynamic_reconfigure
 )
 
-add_message_files(
-   FILES
-   # FootMouseMsg.msg
-)
+# add_message_files(
+#    FILES
+#    # FootMouseMsg.msg
+# )
 
 
 ## Generate added messages and services
