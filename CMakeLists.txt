@@ -25,7 +25,7 @@ find_package(catkin REQUIRED COMPONENTS
 generate_messages(DEPENDENCIES std_msgs)
 
 # Generate dynamic reconfigure parameters
-generate_dynamic_reconfigure_options(cfg/unifiedMotionForceController_params.cfg)
+generate_dynamic_reconfigure_options(cfg/unifiedMotionForceController_params.cfg cfg/motionController_params.cfg)
 
 catkin_package(
   INCLUDE_DIRS include
@@ -43,3 +43,7 @@ add_dependencies(unifiedMotionForceController ${PROJECT_NAME}_gencpp)
 add_executable(motionController src/motionController_node.cpp src/MotionController.cpp)
 target_link_libraries(motionController ${catkin_LIBRARIES})
 add_dependencies(motionController ${PROJECT_NAME}_gencpp)
+
+add_executable(moveToDesiredPose src/moveToDesiredPose_node.cpp src/MoveToDesiredPose.cpp)
+target_link_libraries(moveToDesiredPose ${catkin_LIBRARIES})
+add_dependencies(moveToDesiredPose ${PROJECT_NAME}_gencpp)

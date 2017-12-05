@@ -14,7 +14,7 @@
 
 #include <dynamic_reconfigure/server.h>
 
-#include "motion_force_control/unifiedMotionForceController_paramsConfig.h"
+#include "motion_force_control/motionController_paramsConfig.h"
 
 #include "geometry_msgs/PointStamped.h"
 #include "nav_msgs/Path.h"
@@ -100,7 +100,8 @@ class MotionController
     Eigen::Vector3f _p;
     Eigen::Vector3f _xp;		
     Eigen::Vector3f _xa;    
-    Eigen::Vector3f _x0;    
+    Eigen::Vector3f _x0; 
+    float _vInit;   
 
 		// Control variables
 		float _forceNorm;
@@ -140,8 +141,8 @@ class MotionController
 		std::mutex _mutex;
 
 		// Dynamic reconfigure (server+callback)
-		dynamic_reconfigure::Server<motion_force_control::unifiedMotionForceController_paramsConfig> _dynRecServer;
-		dynamic_reconfigure::Server<motion_force_control::unifiedMotionForceController_paramsConfig>::CallbackType _dynRecCallback;
+		dynamic_reconfigure::Server<motion_force_control::motionController_paramsConfig> _dynRecServer;
+		dynamic_reconfigure::Server<motion_force_control::motionController_paramsConfig>::CallbackType _dynRecCallback;
 
 
 	public:
@@ -167,7 +168,7 @@ class MotionController
 
     void updateMeasuredTwist(const geometry_msgs::Twist::ConstPtr& msg);
 
-    void dynamicReconfigureCallback(motion_force_control::unifiedMotionForceController_paramsConfig &config, uint32_t level);
+    void dynamicReconfigureCallback(motion_force_control::motionController_paramsConfig &config, uint32_t level);
 
     Eigen::Vector4f quaternionProduct(Eigen::Vector4f q1, Eigen::Vector4f q2);
 

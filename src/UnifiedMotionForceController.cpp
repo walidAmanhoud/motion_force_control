@@ -303,6 +303,8 @@ void  UnifiedMotionForceController::autonomousControl()
       _Fc = _maxFc*e1;
     }
 
+    // _Fc = alpha*(Fd+_k2*Fe-_k1*vn);
+
     std::cerr << "contact force: " << _Fc.transpose() << " fc: " << _Fc.norm() << " vn: " << vn.norm() << std::endl;
   }
   else

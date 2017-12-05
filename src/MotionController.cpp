@@ -208,6 +208,7 @@ void  MotionController::computeCommand()
   p13 /= p13.norm();
   p12 /= p12.norm();
   _planeNormal = p13.cross(p12);
+  _planeNormal /= _planeNormal.norm();
 
   // Compute canonical basis used to decompose the desired dynamics along the plane frame
   // D = [e1 e2 e3] with e1 = -n while e2 and e3 are orthogonal to e1
@@ -220,6 +221,7 @@ void  MotionController::computeCommand()
   e2 = (Eigen::Matrix3f::Identity()-S)*temp;
   e2 = e2/(e2.norm());
   e3 = e1.cross(e2);
+  e3 /= e3.norm();
   B.col(0) = e1;
   B.col(1) = e2;
   B.col(2) = e3;
@@ -237,20 +239,29 @@ void  MotionController::computeCommand()
 
   // Compute intersection point on plane
   Eigen::Vector3f xs;
-  xs = _p1+0.05*(_p2-_p1)+0.5*(_p3-_p1);
+  xs = _p1+0.2*(_p2-_p1)+0.5*(_p3-_p1);
   
   Eigen::Vector3f v0, dir;
   dir = xs-_x0;
   dir/=dir.norm();
-  v0 = 0.2f*dir;
+  v0 = _vInit*dir;
 
   // Compute signed normal distance to the plane
-  float normalDistance = (_x-_xp).dot(e1);
+  float normalDistance = (_xp-_x).dot(e1);
 
 
   // Compute desired velocity profile on plane
   Eigen::Vector3f vdt;
-  vdt = (Eigen::Matrix3f::Identity()-S)*(_xa-_x);
+  if(_polishing)
+  {
+    vdt = (Eigen::Matrix3f::Identity()-S)*getDesiredVelocity(_x,_xa);
+  }
+  else
+  {
+    // temp << 0.0f,-1.0f,0.0f;
+    // vdt = (Eigen::Matrix3f::Identity()-S)*temp;
+    vdt = (Eigen::Matrix3f::Identity()-S)*(_xa-_x);
+  }
   vdt = vdt/vdt.norm();
 
   float angle = std::acos(dir.dot(vdt));
@@ -259,7 +270,7 @@ void  MotionController::computeCommand()
   float theta;
   if(normalDistance>0)
   {
-    theta = (1.0f-std::tanh(100*normalDistance))*angle;
+    theta = (1.0f-std::tanh(50*normalDistance))*angle;
   }
   else
   {
@@ -275,16 +286,70 @@ void  MotionController::computeCommand()
   // Compute Weighted diagonal matrix
   Eigen::Matrix3f L = Eigen::Matrix3f::Zero();
   L(0,0) = 1;
-  L(1,1) = std::tanh(10*(_xa-_x).norm());
-  L(2,2) = std::tanh(10*(_xa-_x).norm());
+  if(_polishing)
+  {
+    L(1,1) = 1;
+    L(2,2) = 1;
+  }
+  else
+  {    
+    L(1,1) = std::tanh(50*(_xa-_x).norm());
+    L(2,2) = std::tanh(50*(_xa-_x).norm());  
+    //     L(1,1) = 1;
+    // L(2,2) = 1;
+  }
 
-  _vd  = B*L*B.transpose()*R*v0;
+  _vd = B*L*B.transpose()*(R*v0);
 
   // Bound desired velocity  
   if(_vd.norm()>0.3f)
   {
     _vd *= 0.3f/_vd.norm();
   }
+
+
+// Compute projected force and speed along plane normal
+  Eigen::Vector3f Fn = S*(-_wRb*F);
+  Eigen::Vector3f vn = S*v;
+
+  // Compute desired force along surface normal
+  Eigen::Vector3f Fd = _targetForce*e1;
+
+  // Check if force control activated and compute contact force following the specified dynamics
+  if(_controlForce)
+  {
+    // Compute force error
+    Eigen::Vector3f Fe = Fd-Fn;
+    
+    // Compute force stiffness rate gain from measured speed
+    float alpha = 1-std::tanh(50*vn.norm());
+
+    // Integrate contact force magnitude dynamics
+    _Fc += _dt*(_k1*alpha*Fe-_k2*(1-alpha)*Fd);
+
+    if(_Fc.dot(e1) < _minFc*alpha)
+    {
+      _Fc = _minFc*alpha*e1;
+    }
+    else if(_Fc.dot(e1) > _maxFc)
+    {
+      _Fc = _maxFc*e1;
+    }
+
+    // _Fc = alpha*(_k2*Fe-_k1*vn);
+
+    std::cerr << "contact force: " << _Fc.transpose() << " fc: " << _Fc.norm() << " vn: " << vn.norm() << std::endl;
+  }
+  else
+  {
+    _Fc.setConstant(0.0f);
+  }
+
+
+  std::cerr << "xs: " << xs.transpose() << std::endl;
+  std::cerr << "xa: " << _xa.transpose() << std::endl;
+  std::cerr << "v0: " << v0.transpose() << std::endl;
+  std::cerr << "vd: " << _vd.norm() << " distance: " << normalDistance << std::endl;
 
   // Compute rotation error between current orientation and plane orientation using Rodrigues' law
   Eigen::Vector3f k;
@@ -524,7 +589,7 @@ void MotionController::updatePlane3Pose(const geometry_msgs::PoseStamped::ConstP
 }
 
 
-void MotionController::dynamicReconfigureCallback(motion_force_control::unifiedMotionForceController_paramsConfig &config, uint32_t level)
+void MotionController::dynamicReconfigureCallback(motion_force_control::motionController_paramsConfig &config, uint32_t level)
 {
   ROS_INFO("Reconfigure request. Updatig the parameters ...");
 
@@ -539,6 +604,7 @@ void MotionController::dynamicReconfigureCallback(motion_force_control::unifiedM
   _k2 = config.k2;
   _minFc = config.minFc;
   _maxFc = config.maxFc;
+  _vInit = config.vInit;
 }
 
 
