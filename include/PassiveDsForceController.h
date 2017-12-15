@@ -42,6 +42,8 @@ class PassiveDsForceController
 		// Do one control step
 		Eigen::Vector3f step(Eigen::Vector3f vd, Eigen::Vector3f v);
 
+		Eigen::Matrix3f getDampingMatrix();
+
 	private:
 		// Update damping matrix
 		void updateDampingMatrix(Eigen::Vector3f vd);

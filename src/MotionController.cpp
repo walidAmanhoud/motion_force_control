@@ -37,12 +37,23 @@ MotionController::MotionController(ros::NodeHandle &n, double frequency):
   _firstRealPoseReceived = false;
   _firstWrenchReceived = false;
   _wrenchBiasOK = false;
-  _firstPlane1Pose = false;
-  _firstPlane2Pose = false;
-  _firstPlane3Pose = false;
-  _firstRobotBasisPose = false;
   _stop = false;
   _useOptitrack = false;
+
+  if(_useOptitrack)
+  {
+    _firstPlane1Pose = false;
+    _firstPlane2Pose = false;
+    _firstPlane3Pose = false;
+    _firstRobotBasisPose = false;    
+  }
+  else
+  {
+    _firstPlane1Pose = true;
+    _firstPlane2Pose = true;
+    _firstPlane3Pose = true;
+    _firstRobotBasisPose = true;   
+  }
 
   _lambda1 = 0.0f;
   _lambda2 = 0.0f;
@@ -165,10 +176,10 @@ void MotionController::run()
   while (!_stop) 
   {
     // if(_firstRealPoseReceived && _wrenchBiasOK)
-    // if(_firstRealPoseReceived && _wrenchBiasOK &&//)// &&
-    //    _firstRobotBasisPose && _firstPlane1Pose &&
-    //    _firstPlane2Pose && _firstPlane3Pose)
-    if(_firstRealPoseReceived)
+    if(_firstRealPoseReceived && _wrenchBiasOK &&//)// &&
+       _firstRobotBasisPose && _firstPlane1Pose &&
+       _firstPlane2Pose && _firstPlane3Pose)
+    // if(_firstRealPoseReceived)
     {
 
       _mutex.lock();
@@ -536,14 +547,14 @@ void MotionController::modulatedRotationDynamics()
   }
 
   Fd = _targetForce*gamma/_lambda1;
-  Fd = 0.0f;
+  // Fd = 0.0f;
   lb = Fd/((e2+e3).dot(vR));
 
   float val;
-  val = (std::pow(_vInit,2.0f)-std::pow(la*e1.dot(vR),2.0f)-2.0f*Fd*la*e1.dot(vR))/
-        (std::pow(e2.dot(vR),2.0f)+std::pow(e3.dot(vR),2.0f));
-  // val = (std::pow(_vInit,2.0f)-std::pow(la*e1.dot(vR),2.0f)-2.0f*Fd*la*e1.dot(vR)-std::pow(Fd,2.0f))/
+  // val = (std::pow(_vInit,2.0f)-std::pow(la*e1.dot(vR),2.0f)-2.0f*Fd*la*e1.dot(vR))/
   //       (std::pow(e2.dot(vR),2.0f)+std::pow(e3.dot(vR),2.0f));
+  val = (std::pow(_vInit,2.0f)-std::pow(la*e1.dot(vR),2.0f)-2.0f*Fd*la*e1.dot(vR)-std::pow(Fd,2.0f))/
+        (std::pow(e2.dot(vR),2.0f)+std::pow(e3.dot(vR),2.0f));
 
 
   if(val<0.0f)
@@ -581,20 +592,24 @@ void MotionController::modulatedRotationDynamics()
 
   Eigen::Vector3f Ftemp;
   v = _twist.segment(0,3);
-  _controller.updateDampingGains(1000.0f,500.0f);
+  _controller.updateDampingGains(_lambda1,_lambda2);
   Ftemp = _controller.step(_vd,v);
-  std::cerr << "Ftemp: " << Ftemp.transpose() << std::endl;
+  std::cerr << "Ftemp: " << Ftemp.transpose() << " val: " << val << std::endl;
+  Eigen::Matrix3f D;
+  D = _controller.getDampingMatrix();
+  std::cerr << "e1'*Ftemp: " << e1.dot(D*_vd) << std::endl;
+  
   _Fc = Ftemp;
+  // _Fc = 10*e1;
 
   // std::cerr << "Fc: " << _Fc.transpose() << std::endl;
   // _Fc.setConstant(0.0f);
-  // std::cerr << "e1'*Ftemp: " << e1.dot(Ftemp) << std::endl;
 
 
   // std::cerr << "xs: " << xs.transpose() << std::endl;
   // std::cerr << "xa: " << _xa.transpose() << std::endl;
   // std::cerr << "v0: " << v0.transpose() << std::endl;
-  // std::cerr << "vd: " << _vd.norm() << " distance: " << normalDistance << std::endl;
+  std::cerr << "vd: " << _vd.norm() << " distance: " << normalDistance << std::endl;
 
   // Compute rotation error between current orientation and plane orientation using Rodrigues' law
   Eigen::Vector3f k;

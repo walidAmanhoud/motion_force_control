@@ -44,6 +44,11 @@ Eigen::Vector3f PassiveDsForceController::step(Eigen::Vector3f vd,Eigen::Vector3
   return _F;
 }
 
+Eigen::Matrix3f PassiveDsForceController::getDampingMatrix()
+{
+  return _D;
+}
+
 
 void PassiveDsForceController::updateDampingMatrix(Eigen::Vector3f vd)
 {
