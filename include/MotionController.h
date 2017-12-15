@@ -25,6 +25,8 @@
 #include "geometry_msgs/Wrench.h"
 #include "geometry_msgs/Twist.h"
 
+#include "PassiveDsForceController.h"
+
 #define NB_SAMPLES 50
 #define MAX_XY_REL 300
 #define MAX_FRAME 200
@@ -121,6 +123,7 @@ class MotionController
 		bool _linear;
     bool _polishing;
 		bool _controlForce;
+		bool _useOptitrack;
 
     // Optitrack variables
 		Eigen::Vector3f _robotBasisPosition;
@@ -136,9 +139,14 @@ class MotionController
 		Eigen::Vector3f _p2;
 		Eigen::Vector3f _p3;
 
+		float _lambda1;
+		float _lambda2;
+
 		// Other variables
 		static MotionController* me;
 		std::mutex _mutex;
+
+		PassiveDsForceController _controller;
 
 		// Dynamic reconfigure (server+callback)
 		dynamic_reconfigure::Server<motion_force_control::motionController_paramsConfig> _dynRecServer;
@@ -159,6 +167,10 @@ class MotionController
 	static void stopNode(int sig);
 		
     void computeCommand();
+
+    void rotationDynamics();
+
+    void modulatedRotationDynamics();
     
     void publishData();
 

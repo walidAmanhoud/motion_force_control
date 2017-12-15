@@ -4,7 +4,7 @@ int main(int argc, char **argv)
 {
   ros::init(argc, argv, "motionController");
   ros::NodeHandle n;
-  float frequency = 500.0f;
+  float frequency = 1000.0f;
 
   MotionController motionController(n,frequency);
  

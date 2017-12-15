@@ -42,6 +42,10 @@ MotionController::MotionController(ros::NodeHandle &n, double frequency):
   _firstPlane3Pose = false;
   _firstRobotBasisPose = false;
   _stop = false;
+  _useOptitrack = false;
+
+  _lambda1 = 0.0f;
+  _lambda2 = 0.0f;
 
   _msgMarker.header.frame_id = "world";
   _msgMarker.header.stamp = ros::Time();
@@ -83,6 +87,13 @@ MotionController::MotionController(ros::NodeHandle &n, double frequency):
   p6.y = -objectLength/2.0f;
   p6.z = 0.0f;
 
+  Eigen::Vector3f t1,t2;
+  t1 << 1.0f,0.0f,0.0f;
+  t2 << 0.0f,1.0f,0.0f;
+  _p1 = _p-0.3f*t1+(objectLength/2.0f)*t2;
+  _p2 = _p1-objectLength*t2;
+  _p3 = _p1-objectWidth*t1;
+
   std_msgs::ColorRGBA c;
   c.r = 0.7;
   c.g = 0.7;
@@ -109,7 +120,8 @@ bool MotionController::init()
 {
   // Subscriber definitions
   _subRealPose = _n.subscribe("/lwr/ee_pose", 1, &MotionController::updateRealPose, this, ros::TransportHints().reliable().tcpNoDelay());
-  _subRealTwist = _n.subscribe("/lwr/ee_vel", 1, &MotionController::updateMeasuredTwist, this, ros::TransportHints().reliable().tcpNoDelay());
+  // _subRealTwist = _n.subscribe("/lwr/ee_vel", 1, &MotionController::updateMeasuredTwist, this, ros::TransportHints().reliable().tcpNoDelay());
+  _subRealTwist = _n.subscribe("/lwr/joint_controllers/twist", 1, &MotionController::updateMeasuredTwist, this, ros::TransportHints().reliable().tcpNoDelay());
   _subForceTorqueSensor = _n.subscribe("/ft_sensor/netft_data", 1, &MotionController::updateMeasuredWrench, this, ros::TransportHints().reliable().tcpNoDelay());
 
   _subOptitrackRobotBasisPose = _n.subscribe("/optitrack/robot/pose", 1, &MotionController::updateRobotBasisPose,this,ros::TransportHints().reliable().tcpNoDelay());
@@ -153,9 +165,10 @@ void MotionController::run()
   while (!_stop) 
   {
     // if(_firstRealPoseReceived && _wrenchBiasOK)
-    if(_firstRealPoseReceived && _wrenchBiasOK &&//)// &&
-       _firstRobotBasisPose && _firstPlane1Pose &&
-       _firstPlane2Pose && _firstPlane3Pose)
+    // if(_firstRealPoseReceived && _wrenchBiasOK &&//)// &&
+    //    _firstRobotBasisPose && _firstPlane1Pose &&
+    //    _firstPlane2Pose && _firstPlane3Pose)
+    if(_firstRealPoseReceived)
     {
 
       _mutex.lock();
@@ -193,22 +206,32 @@ void MotionController::stopNode(int sig)
 
 void  MotionController::computeCommand()
 {
-// Extract linear speed, force and torque data
+  // rotationDynamics();
+  modulatedRotationDynamics();
+}
+
+void MotionController::rotationDynamics()
+{
+  // Extract linear speed, force and torque data
   Eigen::Vector3f v = _twist.segment(0,3);
   Eigen::Vector3f F = _filteredWrench.segment(0,3);  
   Eigen::Vector3f T = _filteredWrench.segment(3,3);
 
   // Compute plane normal form markers position
-  _p1 = _plane1Position-_robotBasisPosition;
-  _p2 = _plane2Position-_robotBasisPosition;
-  _p3 = _plane3Position-_robotBasisPosition;
-  Eigen::Vector3f p13,p12;
-  p13 = _p3-_p1;
-  p12 = _p2-_p1;
-  p13 /= p13.norm();
-  p12 /= p12.norm();
-  _planeNormal = p13.cross(p12);
-  _planeNormal /= _planeNormal.norm();
+
+  if(_useOptitrack)
+  {
+    _p1 = _plane1Position-_robotBasisPosition;
+    _p2 = _plane2Position-_robotBasisPosition;
+    _p3 = _plane3Position-_robotBasisPosition;
+    Eigen::Vector3f p13,p12;
+    p13 = _p3-_p1;
+    p12 = _p2-_p1;
+    p13 /= p13.norm();
+    p12 /= p12.norm();
+    _planeNormal = p13.cross(p12);
+    _planeNormal /= _planeNormal.norm();
+  }
 
   // Compute canonical basis used to decompose the desired dynamics along the plane frame
   // D = [e1 e2 e3] with e1 = -n while e2 and e3 are orthogonal to e1
@@ -226,7 +249,6 @@ void  MotionController::computeCommand()
   B.col(1) = e2;
   B.col(2) = e3;
 
-
   // Compute vertical projection of the current position onto the plane
   _xp = _x;
   _xp(2) = (-_planeNormal(0)*(_xp(0)-_p3(0))-_planeNormal(1)*(_xp(1)-_p3(1))+_planeNormal(2)*_p3(2))/_planeNormal(2);
@@ -235,7 +257,6 @@ void  MotionController::computeCommand()
   // Compute fixed attractor on plane
   _xa = _p1+0.8*(_p2-_p1)+0.5*(_p3-_p1);
   _xa(2) = (-_planeNormal(0)*(_xa(0)-_p1(0))-_planeNormal(1)*(_xa(1)-_p1(1))+_planeNormal(2)*_p1(2))/_planeNormal(2);
-
 
   // Compute intersection point on plane
   Eigen::Vector3f xs;
@@ -249,7 +270,6 @@ void  MotionController::computeCommand()
   // Compute signed normal distance to the plane
   float normalDistance = (_xp-_x).dot(e1);
 
-
   // Compute desired velocity profile on plane
   Eigen::Vector3f vdt;
   if(_polishing)
@@ -262,6 +282,7 @@ void  MotionController::computeCommand()
     // vdt = (Eigen::Matrix3f::Identity()-S)*temp;
     vdt = (Eigen::Matrix3f::Identity()-S)*(_xa-_x);
   }
+
   vdt = vdt/vdt.norm();
 
   float angle = std::acos(dir.dot(vdt));
@@ -350,6 +371,230 @@ void  MotionController::computeCommand()
   std::cerr << "xa: " << _xa.transpose() << std::endl;
   std::cerr << "v0: " << v0.transpose() << std::endl;
   std::cerr << "vd: " << _vd.norm() << " distance: " << normalDistance << std::endl;
+
+  // Compute rotation error between current orientation and plane orientation using Rodrigues' law
+  Eigen::Vector3f k;
+  k = (-_wRb.col(2)).cross(_planeNormal);
+  float c = (-_wRb.col(2)).transpose()*_planeNormal;  
+  float s = k.norm();
+  k /= s;
+  K << getSkewSymmetricMatrix(k);
+
+  Eigen::Matrix3f Re = Eigen::Matrix3f::Identity()+s*K+(1-c)*K*K;
+  
+  // Convert rotation error into axis angle representation
+  Eigen::Vector3f omega;
+  Eigen::Vector4f qtemp = rotationMatrixToQuaternion(Re);
+  quaternionToAxisAngle(qtemp,omega,angle);
+
+  // Compute final quaternion on plane
+  Eigen::Vector4f qf = quaternionProduct(qtemp,_q);
+
+  // Perform quaternion slerp interpolation to progressively orient the end effector while approaching the plane
+  _qd = slerpQuaternion(_q,qf,1-std::tanh(5*normalDistance));
+
+  // Compute needed angular velocity to perform the desired quaternion
+  Eigen::Vector4f qcurI, wq;
+  qcurI(0) = _q(0);
+  qcurI.segment(1,3) = -_q.segment(1,3);
+  wq = 5.0f*quaternionProduct(qcurI,_qd-_q);
+  Eigen::Vector3f omegaTemp = _wRb*wq.segment(1,3);
+  _omegad = omegaTemp;
+}
+
+
+void MotionController::modulatedRotationDynamics()
+{
+  // Extract linear speed, force and torque data
+  Eigen::Vector3f v = _twist.segment(0,3);
+  Eigen::Vector3f F = _filteredWrench.segment(0,3);  
+  Eigen::Vector3f T = _filteredWrench.segment(3,3);
+
+
+  if(_useOptitrack)
+  {
+    // Compute plane normal form markers position
+    _p1 = _plane1Position-_robotBasisPosition;
+    _p2 = _plane2Position-_robotBasisPosition;
+    _p3 = _plane3Position-_robotBasisPosition;
+    Eigen::Vector3f p13,p12;
+    p13 = _p3-_p1;
+    p12 = _p2-_p1;
+    p13 /= p13.norm();
+    p12 /= p12.norm();
+    _planeNormal = p13.cross(p12);
+    _planeNormal /= _planeNormal.norm();
+  }
+
+
+  // Compute vertical projection of the current position onto the plane
+  _xp = _x;
+  _xp(2) = (-_planeNormal(0)*(_xp(0)-_p3(0))-_planeNormal(1)*(_xp(1)-_p3(1))+_planeNormal(2)*_p3(2))/_planeNormal(2);
+  // _xp(2) = (-_planeNormal(0)*(_xp(0)-_p(0))-_planeNormal(1)*(_xp(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
+
+  // Compute fixed attractor on plane
+  _xa = _p1+0.8*(_p2-_p1)+0.5*(_p3-_p1);
+  _xa(2) = (-_planeNormal(0)*(_xa(0)-_p1(0))-_planeNormal(1)*(_xa(1)-_p1(1))+_planeNormal(2)*_p1(2))/_planeNormal(2);
+
+  // Compute intersection point on plane
+  Eigen::Vector3f xs;
+  xs = _p1+0.2*(_p2-_p1)+0.5*(_p3-_p1);
+  
+  // Compute initial direction vector
+  Eigen::Vector3f v0, dir;
+  dir = xs-_x0;
+  dir/=dir.norm();
+  v0 = _vInit*dir;
+
+  // Compute direction e1 aligned with -plane normal and the corresponding normal projector S = e1*e1'
+  Eigen::Vector3f e1;
+  Eigen::Matrix3f S;
+  e1 = -_planeNormal;
+  S = e1*e1.transpose();
+  
+  // Compute signed normal distance to the plane
+  float normalDistance = (_xp-_x).dot(e1);
+
+  // Compute desired velocity profile on plane
+  Eigen::Vector3f vdt;
+  // if(_polishing)
+  {
+    vdt = (Eigen::Matrix3f::Identity()-S)*getDesiredVelocity(_x,_xa);
+  }
+  // else
+  // {
+  //   // temp << 0.0f,-1.0f,0.0f;
+  //   // vdt = (Eigen::Matrix3f::Identity()-S)*temp;
+  //   vdt = (Eigen::Matrix3f::Identity()-S)*(_xa-_x);
+  // }
+
+  // Normalize desired veloicty to get the direction to follow on the surface
+  vdt = vdt/vdt.norm();
+
+  float angle = std::acos(dir.dot(vdt));
+
+  // Compute rotation matrix to align initial velocity direction with desired one
+  float theta;
+  if(normalDistance>0)
+  {
+    theta = (1.0f-std::tanh(50*normalDistance))*angle;
+  }
+  else
+  {
+    theta = angle;
+  }
+  Eigen::Vector3f u;
+  u = dir.cross(vdt);
+  u/=u.norm();
+  Eigen::Matrix3f K,R;
+  K = getSkewSymmetricMatrix(u);
+  R = Eigen::Matrix3f::Identity()+sin(theta)*K+(1.0f-cos(theta))*K*K;
+  
+  // Compute rotated dynamics
+  Eigen::Vector3f vR;
+  vR = R*v0;
+  
+  // Compute modulation matrix used to apply a force Fd when the surface is reached while keeping the norm of the velocity constant 
+  // M(x) = B(x)L(x)B(x)
+  // B(x) = [e1 e2 e3] with e1 = -n is an orthognal basis defining the modulation frame
+  //        [la lb lb] 
+  // L(x) = [0  lc 0 ] is the matrix defining the modulation gains to apply on the frame
+  //        [0  0  lc]
+
+  // Compute modulation frame B(x)
+  Eigen::Vector3f temp;
+  temp << 1.0f,0.0f,0.0f;
+  Eigen::Matrix3f B;
+  Eigen::Vector3f e2, e3;
+  e2 = (Eigen::Matrix3f::Identity()-S)*temp;
+  e2 = e2/(e2.norm());
+  e3 = e1.cross(e2);
+  e3 /= e3.norm();
+  B.col(0) = e1;
+  B.col(1) = e2;
+  B.col(2) = e3;
+
+  // Compute diagonal gain matrix L(x)
+  Eigen::Matrix3f L = Eigen::Matrix3f::Zero();
+  float la, lb, lc, gamma;
+  la = 1.0f;
+  
+  if(normalDistance>0.0f)
+  {
+    gamma = 1.0f-std::tanh(100*normalDistance);
+  }
+  else
+  {
+    gamma = 1.0f;
+  }
+
+  float Fd = 0.0f;
+
+  if(_lambda1<1.0f)
+  {
+    _lambda1 = 1.0f;
+  }
+
+  Fd = _targetForce*gamma/_lambda1;
+  Fd = 0.0f;
+  lb = Fd/((e2+e3).dot(vR));
+
+  float val;
+  val = (std::pow(_vInit,2.0f)-std::pow(la*e1.dot(vR),2.0f)-2.0f*Fd*la*e1.dot(vR))/
+        (std::pow(e2.dot(vR),2.0f)+std::pow(e3.dot(vR),2.0f));
+  // val = (std::pow(_vInit,2.0f)-std::pow(la*e1.dot(vR),2.0f)-2.0f*Fd*la*e1.dot(vR)-std::pow(Fd,2.0f))/
+  //       (std::pow(e2.dot(vR),2.0f)+std::pow(e3.dot(vR),2.0f));
+
+
+  if(val<0.0f)
+  {
+    la = 1.0f;
+    lb = 0.0f;
+    lc = 1.0f;
+  }
+  else
+  {
+    lc = sqrt(val);
+  }
+
+  // std::cerr << "Val: " << val << " L: " << la << " " << lb << " " << lc << std::endl;
+
+  L(0,0) = la;
+  L(0,1) = lb;
+  L(0,2) = lb;
+  L(1,1) = lc;
+  L(2,2) = lc;
+
+  // Compute modulation matrix
+  Eigen::Matrix3f M;
+  M = B*L*B.transpose();
+
+  // Compute modulated rotation dynamics
+  _vd = M*vR;
+
+
+  // Bound desired velocity  
+  if(_vd.norm()>0.3f)
+  {
+    _vd *= 0.3f/_vd.norm();
+  }
+
+  Eigen::Vector3f Ftemp;
+  v = _twist.segment(0,3);
+  _controller.updateDampingGains(1000.0f,500.0f);
+  Ftemp = _controller.step(_vd,v);
+  std::cerr << "Ftemp: " << Ftemp.transpose() << std::endl;
+  _Fc = Ftemp;
+
+  // std::cerr << "Fc: " << _Fc.transpose() << std::endl;
+  // _Fc.setConstant(0.0f);
+  // std::cerr << "e1'*Ftemp: " << e1.dot(Ftemp) << std::endl;
+
+
+  // std::cerr << "xs: " << xs.transpose() << std::endl;
+  // std::cerr << "xa: " << _xa.transpose() << std::endl;
+  // std::cerr << "v0: " << v0.transpose() << std::endl;
+  // std::cerr << "vd: " << _vd.norm() << " distance: " << normalDistance << std::endl;
 
   // Compute rotation error between current orientation and plane orientation using Rodrigues' law
   Eigen::Vector3f k;
@@ -605,6 +850,9 @@ void MotionController::dynamicReconfigureCallback(motion_force_control::motionCo
   _minFc = config.minFc;
   _maxFc = config.maxFc;
   _vInit = config.vInit;
+  _lambda1 = config.lambda1;
+  _lambda2 = config.lambda2;
+  _controller.updateDampingGains(_lambda1,_lambda2);
 }
 
 

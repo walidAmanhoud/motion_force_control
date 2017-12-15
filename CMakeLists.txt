@@ -25,11 +25,12 @@ find_package(catkin REQUIRED COMPONENTS
 generate_messages(DEPENDENCIES std_msgs)
 
 # Generate dynamic reconfigure parameters
-generate_dynamic_reconfigure_options(cfg/unifiedMotionForceController_params.cfg cfg/motionController_params.cfg)
+generate_dynamic_reconfigure_options(cfg/unifiedMotionForceController_params.cfg 
+                                     cfg/motionController_params.cfg)
 
 catkin_package(
   INCLUDE_DIRS include
-  LIBRARIES ${PROJECT_NAME}
+  LIBRARIES ${PROJECT_NAME} passive_ds_force_controller
   CATKIN_DEPENDS roscpp rospy std_msgs message_generation kdl_parser dynamic_reconfigure
   # DEPENDS Eigen
  )
@@ -41,9 +42,19 @@ target_link_libraries(unifiedMotionForceController ${catkin_LIBRARIES})
 add_dependencies(unifiedMotionForceController ${PROJECT_NAME}_gencpp)
 
 add_executable(motionController src/motionController_node.cpp src/MotionController.cpp)
-target_link_libraries(motionController ${catkin_LIBRARIES})
+target_link_libraries(motionController ${catkin_LIBRARIES} passive_ds_force_controller)
 add_dependencies(motionController ${PROJECT_NAME}_gencpp)
 
 add_executable(moveToDesiredPose src/moveToDesiredPose_node.cpp src/MoveToDesiredPose.cpp)
 target_link_libraries(moveToDesiredPose ${catkin_LIBRARIES})
 add_dependencies(moveToDesiredPose ${PROJECT_NAME}_gencpp)
+
+
+#this step is required to have the files how up in qtcreator
+# file(GLOB HEADERS "include/*.h")
+#file(GLOB HEADERS "include/locally_modulated_ds/*.h")
+
+## Declare a cpp library
+add_library(passive_ds_force_controller
+  src/PassiveDsForceController.cpp
+)
