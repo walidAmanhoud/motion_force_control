@@ -176,10 +176,10 @@ void MotionController::run()
   while (!_stop) 
   {
     // if(_firstRealPoseReceived && _wrenchBiasOK)
-    if(_firstRealPoseReceived && _wrenchBiasOK &&//)// &&
-       _firstRobotBasisPose && _firstPlane1Pose &&
-       _firstPlane2Pose && _firstPlane3Pose)
-    // if(_firstRealPoseReceived)
+    // if(_firstRealPoseReceived && _wrenchBiasOK &&//)// &&
+    //    _firstRobotBasisPose && _firstPlane1Pose &&
+    //    _firstPlane2Pose && _firstPlane3Pose)
+    if(_firstRealPoseReceived)
     {
 
       _mutex.lock();
@@ -575,6 +575,29 @@ void MotionController::modulatedRotationDynamics()
   L(0,2) = lb;
   L(1,1) = lc;
   L(2,2) = lc;
+
+  ////////////////////////////
+  // Test other formulation //
+  ////////////////////////////
+
+  // float delta = std::pow(2.0f*e1.dot(vR)*Fd,2.0f)-4.0f*std::pow(_vInit,2.0f)*(std::pow(Fd,2.0f)-std::pow(_vInit,2.0f));
+  // if(delta < 0.0f)
+  // {
+  //   delta = 0.0f;
+  // }
+  // float lambda = (-2.0f*e1.dot(vR)*Fd+sqrt(delta))/(2*std::pow(_vInit,2.0f));
+  // if(lambda<0.0f)
+  // {
+  //   lambda = 0.0f;
+  // }
+  // std::cerr << "Delta: " << delta << " Lambda: " << lambda << std::endl;
+  // L(0,0) = lambda;
+  // L(0,1) = lb;
+  // L(0,2) = lb;
+  // L(1,1) = lambda;
+  // L(2,2) = lambda;
+
+
 
   // Compute modulation matrix
   Eigen::Matrix3f M;

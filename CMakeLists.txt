@@ -38,7 +38,7 @@ catkin_package(
 include_directories(include ${catkin_INCLUDE_DIRS})
 
 add_executable(unifiedMotionForceController src/unifiedMotionForceController_node.cpp src/UnifiedMotionForceController.cpp)
-target_link_libraries(unifiedMotionForceController ${catkin_LIBRARIES})
+target_link_libraries(unifiedMotionForceController ${catkin_LIBRARIES} passive_ds_force_controller)
 add_dependencies(unifiedMotionForceController ${PROJECT_NAME}_gencpp)
 
 add_executable(motionController src/motionController_node.cpp src/MotionController.cpp)
