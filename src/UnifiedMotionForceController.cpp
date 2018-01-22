@@ -303,12 +303,14 @@ void  UnifiedMotionForceController::autonomousControl()
       _Fc = _maxFc*e1;
     }
 
+
     // _Fc = alpha*(Fd+_k2*Fe-_k1*vn);
 
     std::cerr << "contact force: " << _Fc.transpose() << " fc: " << _Fc.norm() << " vn: " << vn.norm() << std::endl;
   }
   else
   {
+    
     _Fc.setConstant(0.0f);
   }
 
@@ -318,6 +320,16 @@ void  UnifiedMotionForceController::autonomousControl()
   {
     _vd *= 0.3f/_vd.norm();
   }
+
+  //////////////////////////////////////
+  // Test passive ds force controller //
+  //////////////////////////////////////
+
+  // _controller.updateDampingGains(_lambda1,_lambda2);
+  // Eigen::Vector3f Ftemp = _controller.step(_vd,v,_Fc);
+  // std::cerr << "Energy tank state: " << _controller.getEnergyTank() << " Alpha: " << _controller.getAlpha() << " Beta: " << _controller.getBeta() << std::endl;
+  // _Fc = Ftemp;
+
 
   // Compute rotation error between current orientation and plane orientation using Rodrigues' law
   Eigen::Vector3f k;
@@ -575,6 +587,9 @@ void UnifiedMotionForceController::dynamicReconfigureCallback(motion_force_contr
   _k2 = config.k2;
   _minFc = config.minFc;
   _maxFc = config.maxFc;
+  _lambda1 = config.lambda1;
+  _lambda2 = config.lambda2;
+  _controller.updateDampingGains(_lambda1,_lambda2);
 }
 
 

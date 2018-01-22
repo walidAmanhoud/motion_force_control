@@ -25,6 +25,8 @@
 #include "geometry_msgs/Wrench.h"
 #include "geometry_msgs/Twist.h"
 
+#include "PassiveDsForceController.h"
+
 #define NB_SAMPLES 50
 #define MAX_XY_REL 300
 #define MAX_FRAME 200
@@ -110,6 +112,8 @@ class UnifiedMotionForceController
 		Eigen::Vector3f _Fc;
 		float _minFc;
 		float _maxFc;
+		float _lambda1;
+		float _lambda2;
 		
     // Booleans
 		bool _firstRealPoseReceived;	// Monitor the first robot pose update
@@ -135,6 +139,7 @@ class UnifiedMotionForceController
 		Eigen::Vector3f _p3;
 
 		// Other variables
+		PassiveDsForceController _controller;
 		static UnifiedMotionForceController* me;
 		std::mutex _mutex;
 
