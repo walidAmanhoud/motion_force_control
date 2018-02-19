@@ -13,6 +13,7 @@ find_package(catkin REQUIRED COMPONENTS
   message_generation
   kdl_parser
   dynamic_reconfigure
+  foot_interfaces
 )
 
 # add_message_files(
@@ -26,12 +27,13 @@ generate_messages(DEPENDENCIES std_msgs)
 
 # Generate dynamic reconfigure parameters
 generate_dynamic_reconfigure_options(cfg/unifiedMotionForceController_params.cfg 
-                                     cfg/motionController_params.cfg)
+                                     cfg/motionController_params.cfg
+                                     cfg/forceTaskSharedControl_params.cfg)
 
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES ${PROJECT_NAME} passive_ds_force_controller
-  CATKIN_DEPENDS roscpp rospy std_msgs message_generation kdl_parser dynamic_reconfigure
+  CATKIN_DEPENDS roscpp rospy std_msgs message_generation kdl_parser dynamic_reconfigure foot_interfaces
   # DEPENDS Eigen
  )
 
@@ -48,6 +50,10 @@ add_dependencies(motionController ${PROJECT_NAME}_gencpp)
 add_executable(moveToDesiredPose src/moveToDesiredPose_node.cpp src/MoveToDesiredPose.cpp)
 target_link_libraries(moveToDesiredPose ${catkin_LIBRARIES})
 add_dependencies(moveToDesiredPose ${PROJECT_NAME}_gencpp)
+
+add_executable(forceTaskSharedControl src/forceTaskSharedControl_node.cpp src/ForceTaskSharedControl.cpp)
+target_link_libraries(forceTaskSharedControl ${catkin_LIBRARIES})
+add_dependencies(forceTaskSharedControl ${PROJECT_NAME}_gencpp)
 
 
 #this step is required to have the files how up in qtcreator
