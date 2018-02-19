@@ -110,11 +110,13 @@ class UnifiedMotionForceController
     float _k1;
     float _k2;
 		Eigen::Vector3f _Fc;
+		Eigen::Vector3f _Fds;
+		Eigen::Vector3f _Fu;
 		float _minFc;
 		float _maxFc;
 		float _lambda1;
 		float _lambda2;
-		
+		float _s;
     // Booleans
 		bool _firstRealPoseReceived;	// Monitor the first robot pose update
 		bool _firstWrenchReceived;
@@ -123,6 +125,7 @@ class UnifiedMotionForceController
 		bool _linear;
     bool _polishing;
 		bool _controlForce;
+		bool _useOptitrack;
 
     // Optitrack variables
 		Eigen::Vector3f _robotBasisPosition;

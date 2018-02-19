@@ -5,7 +5,8 @@ UnifiedMotionForceController* UnifiedMotionForceController::me = NULL;
 UnifiedMotionForceController::UnifiedMotionForceController(ros::NodeHandle &n, double frequency):
   _n(n),
   _loopRate(frequency),
-  _dt(1.0f/frequency)
+  _dt(1.0f/frequency),
+  _controller(1.0f/frequency)
 {
     me = this;
 
@@ -25,23 +26,39 @@ UnifiedMotionForceController::UnifiedMotionForceController(ros::NodeHandle &n, d
   _omegad.setConstant(0.0f);
   _qd.setConstant(0.0f);
 
-  _taskAttractor << -0.6f, -0.3f, 0.186f;
+  _taskAttractor << -0.5f, -0.1f, 0.186f;
   
   _planeNormal << 0.0f, 0.0f, 1.0f;
   _p << 0.0f,0.0f,0.186f;
 
   _Fc.setConstant(0.0f);
+  _Fds.setConstant(0.0f);
+  _Fu.setConstant(0.0f);
   _minFc = 0.0f;
   _maxFc = 0.0f;
 
   _firstRealPoseReceived = false;
   _firstWrenchReceived = false;
   _wrenchBiasOK = false;
-  _firstPlane1Pose = false;
-  _firstPlane2Pose = false;
-  _firstPlane3Pose = false;
-  _firstRobotBasisPose = false;
+
+  _useOptitrack = true;
+
+  if(_useOptitrack)
+  {
+    _firstPlane1Pose = false;
+    _firstPlane2Pose = false;
+    _firstPlane3Pose = false;
+    _firstRobotBasisPose = false;    
+  }
+  else
+  {
+    _firstPlane1Pose = true;
+    _firstPlane2Pose = true;
+    _firstPlane3Pose = true;
+    _firstRobotBasisPose = true;   
+  }
   _stop = false;
+
 
   _msgMarker.header.frame_id = "world";
   _msgMarker.header.stamp = ros::Time();
@@ -177,6 +194,8 @@ void UnifiedMotionForceController::run()
   _omegad.setConstant(0.0f);
   _qd = _q;
   _Fc.setConstant(0.0f);
+  _Fds.setConstant(0.0f);
+  _Fu.setConstant(0.0f);
 
   publishData();
   ros::spinOnce();
@@ -205,15 +224,20 @@ void  UnifiedMotionForceController::autonomousControl()
   Eigen::Vector3f T = _filteredWrench.segment(3,3);
 
   // Compute plane normal form markers position
-  _p1 = _plane1Position-_robotBasisPosition;
-  _p2 = _plane2Position-_robotBasisPosition;
-  _p3 = _plane3Position-_robotBasisPosition;
-  Eigen::Vector3f p13,p12;
-  p13 = _p3-_p1;
-  p12 = _p2-_p1;
-  p13 /= p13.norm();
-  p12 /= p12.norm();
-  _planeNormal = p13.cross(p12);
+  if(_useOptitrack)
+  {
+    _p1 = _plane1Position-_robotBasisPosition;
+    _p2 = _plane2Position-_robotBasisPosition;
+    _p3 = _plane3Position-_robotBasisPosition;
+    Eigen::Vector3f p13,p12;
+    p13 = _p3-_p1;
+    p12 = _p2-_p1;
+    p13 /= p13.norm();
+    p12 /= p12.norm();
+    _planeNormal = p13.cross(p12);
+    _planeNormal /= _planeNormal.norm();
+  }
+
 
   // Compute canonical basis used to decompose the desired dynamics along the plane frame
   // D = [e1 e2 e3] with e1 = -n while e2 and e3 are orthogonal to e1
@@ -235,33 +259,45 @@ void  UnifiedMotionForceController::autonomousControl()
 
   // Compute Weighted diagonal matrix
   Eigen::Matrix3f L = Eigen::Matrix3f::Zero();
-  L(0,0) = _convergenceRate*(1-std::tanh(10*normalDistance));
-  // L(0,0) = _convergenceRate*std::tanh(50*normalDistance);
+  // L(0,0) = _convergenceRate*(1-std::tanh(10*normalDistance));
+  L(0,0) = _convergenceRate*std::tanh(50*normalDistance);
   // L(0,0) = _convergenceRate;
   L(1,1) = _convergenceRate*(1-std::tanh(50*normalDistance));
   L(2,2) = _convergenceRate*(1-std::tanh(50*normalDistance));
 
   // Compute vertical projection of the current position onto the plane
   _xp = _x;
-  _xp(2) = (-_planeNormal(0)*(_xp(0)-_p3(0))-_planeNormal(1)*(_xp(1)-_p3(1))+_planeNormal(2)*_p3(2))/_planeNormal(2);
-  // _xp(2) = (-_planeNormal(0)*(_xp(0)-_p(0))-_planeNormal(1)*(_xp(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
-
+  if(_useOptitrack)
+  {
+    _xp(2) = (-_planeNormal(0)*(_xp(0)-_p3(0))-_planeNormal(1)*(_xp(1)-_p3(1))+_planeNormal(2)*_p3(2))/_planeNormal(2);
+    
+  }
+  else
+  {
+    _xp(2) = (-_planeNormal(0)*(_xp(0)-_p(0))-_planeNormal(1)*(_xp(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
+  }
   // Compute fixed attractor on plane
-  _xa = _p1+0.8*(_p2-_p1)+0.5*(_p3-_p1);
-  _xa(2) = (-_planeNormal(0)*(_xa(0)-_p1(0))-_planeNormal(1)*(_xa(1)-_p1(1))+_planeNormal(2)*_p1(2))/_planeNormal(2);
 
 
   Eigen::Vector3f xs;
-  xs = _p1+0.05*(_p2-_p1)+0.5*(_p3-_p1);
-  // _xa = _taskAttractor;
-  // _xa(2) = (-_planeNormal(0)*(_xa(0)-_p(0))-_planeNormal(1)*(_xa(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
-  std::cerr << "xa: " << _xa.transpose() << std::endl;
+  if(_useOptitrack)
+  {
+    xs = _p1+0.05*(_p2-_p1)+0.5*(_p3-_p1);
+    _xa = _p1+0.7*(_p2-_p1)+0.5*(_p3-_p1);
+    _xa(2) = (-_planeNormal(0)*(_xa(0)-_p1(0))-_planeNormal(1)*(_xa(1)-_p1(1))+_planeNormal(2)*_p1(2))/_planeNormal(2);
+  }
+  else
+  {
+    _xa = _taskAttractor;
+    _xa(2) = (-_planeNormal(0)*(_xa(0)-_p(0))-_planeNormal(1)*(_xa(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
+  }
+  // std::cerr << "xa: " << _xa.transpose() << std::endl;
 
   // Check if polishing motion is activated and compute desired velocity based on motion dynamics = sum of linear dynamics coming from moving and fixed attractors
   if(_polishing && !_linear)
   {
-    _vd = (B*L*B.transpose())*((_xp-_x)+(Eigen::Matrix3f::Identity()-S)*getDesiredVelocity(_x,_xa));
-    // _vd = std::tanh(50*normalDistance)*(xs-_x)+_convergenceRate*(1-std::tanh(50*normalDistance))*(Eigen::Matrix3f::Identity()-S)*getDesiredVelocity(_x,_xa);
+    // _vd = (B*L*B.transpose())*((_xp-_x)+(Eigen::Matrix3f::Identity()-S)*getDesiredVelocity(_x,_xa));
+    _vd = std::tanh(50*normalDistance)*(_xp-_x)+_convergenceRate*(1-std::tanh(50*normalDistance))*(Eigen::Matrix3f::Identity()-S)*getDesiredVelocity(_x,_xa);
 
   }
   else if(_linear && !_polishing)
@@ -290,9 +326,10 @@ void  UnifiedMotionForceController::autonomousControl()
     
     // Compute force stiffness rate gain from measured speed
     float alpha = 1-std::tanh(50*vn.norm());
+    // float alpha = (1-std::tanh(50*normalDistance));
 
     // Integrate contact force magnitude dynamics
-    _Fc += _dt*(_k1*alpha*Fe-_k2*(1-alpha)*Fd);
+    _Fc += _dt*(_k1*alpha*Fe-_k2*(1-alpha)*_Fc);
 
     if(_Fc.dot(e1) < _minFc*alpha)
     {
@@ -306,7 +343,8 @@ void  UnifiedMotionForceController::autonomousControl()
 
     // _Fc = alpha*(Fd+_k2*Fe-_k1*vn);
 
-    std::cerr << "contact force: " << _Fc.transpose() << " fc: " << _Fc.norm() << " vn: " << vn.norm() << std::endl;
+    // std::cerr << "contact force: " << _Fc.transpose() << " fc: " << _Fc.dot(e1) << " vn: " << vn.norm() << std::endl;
+    // std::cerr << "vd: " << _vd.transpose() << " dt: " << _dt << " alpha: " << alpha << std::endl;
   }
   else
   {
@@ -325,10 +363,27 @@ void  UnifiedMotionForceController::autonomousControl()
   // Test passive ds force controller //
   //////////////////////////////////////
 
-  // _controller.updateDampingGains(_lambda1,_lambda2);
-  // Eigen::Vector3f Ftemp = _controller.step(_vd,v,_Fc);
-  // std::cerr << "Energy tank state: " << _controller.getEnergyTank() << " Alpha: " << _controller.getAlpha() << " Beta: " << _controller.getBeta() << std::endl;
-  // _Fc = Ftemp;
+  _controller.updateDampingGains(_lambda1,_lambda2);
+  // _Fds = _controller.step(_vd,v);
+  // _Fu = _Fc+_Fds;
+  // float gamma;
+  // if(normalDistance>0.0f)
+  // {
+  //   gamma = 1.0f-std::tanh(100*normalDistance);
+  // }
+  // else
+  // {
+  //   gamma = 1.0f;
+  // }
+  // _Fc = Fd;
+  // _Fu = _controller.step(_vd,v)+_Fc;
+
+  // _s = 0.0f;
+  _Fu = _controller.step(_vd,v,_Fc);
+  _s = _controller.getEnergyTank();
+  // std::cerr << _Fds.transpose() << " " << _lambda1 << " " << _lambda2 <<std::endl;
+  // std::cerr << "z: "<< _Fc.dot(v) << " Energy tank: " << _controller.getEnergyTank() << " Alpha: " << _controller.getAlpha() << " Beta: " << _controller.getBeta() << std::endl;
+  
 
 
   // Compute rotation error between current orientation and plane orientation using Rodrigues' law
@@ -436,6 +491,7 @@ void UnifiedMotionForceController::publishData()
 
   std_msgs::Float32 msg;
   msg.data = _forceNorm;
+  msg.data = _s;
   _pubForceNorm.publish(msg);
 
   _msgFilteredWrench.header.frame_id = "world";
@@ -449,9 +505,9 @@ void UnifiedMotionForceController::publishData()
   _pubFilteredWrench.publish(_msgFilteredWrench);
 
 
-  _msgDesiredWrench.force.x = _Fc(0);
-  _msgDesiredWrench.force.y = _Fc(1);
-  _msgDesiredWrench.force.z = _Fc(2);
+  _msgDesiredWrench.force.x = _Fu(0);
+  _msgDesiredWrench.force.y = _Fu(1);
+  _msgDesiredWrench.force.z = _Fu(2);
   _msgDesiredWrench.torque.x = 0.0f;
   _msgDesiredWrench.torque.y = 0.0f;
   _msgDesiredWrench.torque.z = 0.0f;

@@ -33,6 +33,8 @@ class PassiveDsForceController
 		float _alpha;			// Variable controlling the addition of energy to the tank from the damping
 		float _beta;			// Variable controlling the addition/soustraction of energy to/from the tank based on
 								// on the tank state 
+		float _betaF;
+		float _dt;
 
 		// // Dynamic reconfigure (server+callback)
 		// dynamic_reconfigure::Server<motion_force_control::passiveDsForceController_paramsConfig> _dynRecServer;
@@ -41,7 +43,7 @@ class PassiveDsForceController
 
 	public:
 		// Class constructor
-		PassiveDsForceController();
+		PassiveDsForceController(float dt);
 
 		// Update damping gains
 		void updateDampingGains(float lambda1, float lambda2);

@@ -5,7 +5,8 @@ MotionController* MotionController::me = NULL;
 MotionController::MotionController(ros::NodeHandle &n, double frequency):
   _n(n),
   _loopRate(frequency),
-  _dt(1.0f/frequency)
+  _dt(1.0f/frequency),
+  _controller(1.0f/frequency)
 {
     me = this;
 
@@ -25,7 +26,7 @@ MotionController::MotionController(ros::NodeHandle &n, double frequency):
   _omegad.setConstant(0.0f);
   _qd.setConstant(0.0f);
 
-  _taskAttractor << -0.6f, -0.3f, 0.186f;
+  _taskAttractor << -0.5f, -0.2f, 0.186f;
   
   _planeNormal << 0.0f, 0.0f, 1.0f;
   _p << 0.0f,0.0f,0.186f;
@@ -175,11 +176,11 @@ void MotionController::run()
 {
   while (!_stop) 
   {
-    // if(_firstRealPoseReceived && _wrenchBiasOK)
+    if(_firstRealPoseReceived && _wrenchBiasOK)
     // if(_firstRealPoseReceived && _wrenchBiasOK &&//)// &&
     //    _firstRobotBasisPose && _firstPlane1Pose &&
     //    _firstPlane2Pose && _firstPlane3Pose)
-    if(_firstRealPoseReceived)
+    // if(_firstRealPoseReceived)
     {
 
       _mutex.lock();
@@ -357,7 +358,7 @@ void MotionController::rotationDynamics()
     float alpha = 1-std::tanh(50*vn.norm());
 
     // Integrate contact force magnitude dynamics
-    _Fc += _dt*(_k1*alpha*Fe-_k2*(1-alpha)*Fd);
+    _Fc += _dt*(_k1*alpha*Fe-_k2*(1-alpha)*_Fc);
 
     if(_Fc.dot(e1) < _minFc*alpha)
     {
@@ -437,23 +438,38 @@ void MotionController::modulatedRotationDynamics()
     _planeNormal /= _planeNormal.norm();
   }
 
-
-  // Compute vertical projection of the current position onto the plane
   _xp = _x;
-  _xp(2) = (-_planeNormal(0)*(_xp(0)-_p3(0))-_planeNormal(1)*(_xp(1)-_p3(1))+_planeNormal(2)*_p3(2))/_planeNormal(2);
-  // _xp(2) = (-_planeNormal(0)*(_xp(0)-_p(0))-_planeNormal(1)*(_xp(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
-
-  // Compute fixed attractor on plane
-  _xa = _p1+0.8*(_p2-_p1)+0.5*(_p3-_p1);
-  _xa(2) = (-_planeNormal(0)*(_xa(0)-_p1(0))-_planeNormal(1)*(_xa(1)-_p1(1))+_planeNormal(2)*_p1(2))/_planeNormal(2);
 
   // Compute intersection point on plane
   Eigen::Vector3f xs;
-  xs = _p1+0.2*(_p2-_p1)+0.5*(_p3-_p1);
+  // xs = _p1+0.2*(_p2-_p1)+0.5*(_p3-_p1);
+  if(_useOptitrack)
+  {
+    _xp(2) = (-_planeNormal(0)*(_xp(0)-_p3(0))-_planeNormal(1)*(_xp(1)-_p3(1))+_planeNormal(2)*_p3(2))/_planeNormal(2);
+    
+  }
+  else
+  {
+    _xp(2) = (-_planeNormal(0)*(_xp(0)-_p(0))-_planeNormal(1)*(_xp(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
+  }
+  // Compute fixed attractor on plane
+
+  if(_useOptitrack)
+  {
+    xs = _p1+0.05*(_p2-_p1)+0.5*(_p3-_p1);
+    _xa = _p1+0.7*(_p2-_p1)+0.5*(_p3-_p1);
+    _xa(2) = (-_planeNormal(0)*(_xa(0)-_p1(0))-_planeNormal(1)*(_xa(1)-_p1(1))+_planeNormal(2)*_p1(2))/_planeNormal(2);
+  }
+  else
+  {
+    _xa = _taskAttractor;
+    _xa(2) = (-_planeNormal(0)*(_xa(0)-_p(0))-_planeNormal(1)*(_xa(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
+  }
   
   // Compute initial direction vector
   Eigen::Vector3f v0, dir;
-  dir = xs-_x0;
+  // dir = xs-_x0;
+  dir = -_planeNormal;
   dir/=dir.norm();
   v0 = _vInit*dir;
 
@@ -548,7 +564,20 @@ void MotionController::modulatedRotationDynamics()
 
   Fd = _targetForce*gamma/_lambda1;
   // Fd = 0.0f;
+  float bou = (e2+e3).dot(vR);
+  if(fabs(bou)<1e-3f)
+  {
+    lb = 1.0f;
+  }
+  else
+  {
+    lb = Fd/((e2+e3).dot(vR));
+  }
   lb = Fd/((e2+e3).dot(vR));
+
+  std::cerr << (e2+e3).dot(vR) << std::endl;
+  std::cerr << (e2+e3) << std::endl;
+  std::cerr << vR << std::endl;
 
   float val;
   // val = (std::pow(_vInit,2.0f)-std::pow(la*e1.dot(vR),2.0f)-2.0f*Fd*la*e1.dot(vR))/
@@ -570,32 +599,32 @@ void MotionController::modulatedRotationDynamics()
 
   // std::cerr << "Val: " << val << " L: " << la << " " << lb << " " << lc << std::endl;
 
-  L(0,0) = la;
-  L(0,1) = lb;
-  L(0,2) = lb;
-  L(1,1) = lc;
-  L(2,2) = lc;
+  // L(0,0) = la;
+  // L(0,1) = lb;
+  // L(0,2) = lb;
+  // L(1,1) = lc;
+  // L(2,2) = lc;
 
   ////////////////////////////
   // Test other formulation //
   ////////////////////////////
 
-  // float delta = std::pow(2.0f*e1.dot(vR)*Fd,2.0f)-4.0f*std::pow(_vInit,2.0f)*(std::pow(Fd,2.0f)-std::pow(_vInit,2.0f));
-  // if(delta < 0.0f)
-  // {
-  //   delta = 0.0f;
-  // }
-  // float lambda = (-2.0f*e1.dot(vR)*Fd+sqrt(delta))/(2*std::pow(_vInit,2.0f));
-  // if(lambda<0.0f)
-  // {
-  //   lambda = 0.0f;
-  // }
-  // std::cerr << "Delta: " << delta << " Lambda: " << lambda << std::endl;
-  // L(0,0) = lambda;
-  // L(0,1) = lb;
-  // L(0,2) = lb;
-  // L(1,1) = lambda;
-  // L(2,2) = lambda;
+  float delta = std::pow(2.0f*e1.dot(vR)*Fd,2.0f)-4.0f*std::pow(_vInit,2.0f)*(std::pow(Fd,2.0f)-std::pow(_vInit,2.0f));
+  if(delta < 0.0f)
+  {
+    delta = 0.0f;
+  }
+  float lambda = (-2.0f*e1.dot(vR)*Fd+sqrt(delta))/(2*std::pow(_vInit,2.0f));
+  if(lambda<0.0f)
+  {
+    lambda = 0.0f;
+  }
+  std::cerr << "Delta: " << delta << " Lambda: " << lambda << "lb: " << lb << std::endl;
+  L(0,0) = lambda;
+  L(0,1) = lb;
+  L(0,2) = lb;
+  L(1,1) = lambda;
+  L(2,2) = lambda;
 
 
 

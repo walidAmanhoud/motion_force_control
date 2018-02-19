@@ -61,6 +61,10 @@ add_dependencies(forceTaskSharedControl ${PROJECT_NAME}_gencpp)
 #file(GLOB HEADERS "include/locally_modulated_ds/*.h")
 
 ## Declare a cpp library
-add_library(passive_ds_force_controller
-  src/PassiveDsForceController.cpp
-)
+add_library(passive_ds_force_controller src/PassiveDsForceController.cpp)
+
+FILE(GLOB SRCS src/UnifiedMotionForceController.cpp src/MotionController.cpp src/MoveToDesiredPose.cpp src/PassiveDsForceController.cpp)
+FILE(GLOB INCS src/UnifiedMotionForceController.h src/MotionController.h src/MoveToDesiredPose.h src/PassiveDsForceController.h)
+
+add_library(${PROJECT_NAME} ${SRCS} ${INCS} )
+target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES})
