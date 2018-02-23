@@ -26,7 +26,7 @@ MotionController::MotionController(ros::NodeHandle &n, double frequency):
   _omegad.setConstant(0.0f);
   _qd.setConstant(0.0f);
 
-  _taskAttractor << -0.5f, -0.2f, 0.186f;
+  _taskAttractor << -0.5f, -0.1f, 0.186f;
   
   _planeNormal << 0.0f, 0.0f, 1.0f;
   _p << 0.0f,0.0f,0.186f;
@@ -39,7 +39,8 @@ MotionController::MotionController(ros::NodeHandle &n, double frequency):
   _firstWrenchReceived = false;
   _wrenchBiasOK = false;
   _stop = false;
-  _useOptitrack = false;
+  _useOptitrack = true;
+  _useDS = false;
 
   if(_useOptitrack)
   {
@@ -504,22 +505,42 @@ void MotionController::modulatedRotationDynamics()
   float theta;
   if(normalDistance>0)
   {
-    theta = (1.0f-std::tanh(50*normalDistance))*angle;
+    theta = (1.0f-std::tanh(20*normalDistance))*angle;
   }
   else
   {
     theta = angle;
+    normalDistance = 0.0f;
   }
   Eigen::Vector3f u;
   u = dir.cross(vdt);
-  u/=u.norm();
   Eigen::Matrix3f K,R;
-  K = getSkewSymmetricMatrix(u);
-  R = Eigen::Matrix3f::Identity()+sin(theta)*K+(1.0f-cos(theta))*K*K;
+  if(u.norm() < FLT_EPSILON)
+  {
+    R.setIdentity();
+  }
+  else
+  {
+    u/=u.norm();
+    K = getSkewSymmetricMatrix(u);
+    R = Eigen::Matrix3f::Identity()+sin(theta)*K+(1.0f-cos(theta))*K*K;
+  }
   
   // Compute rotated dynamics
   Eigen::Vector3f vR;
-  vR = R*v0;
+
+  if(_useDS)
+  {
+    vR = std::tanh(20*normalDistance)*(_xp-_x)+_convergenceRate*(1-std::tanh(20*normalDistance))*(Eigen::Matrix3f::Identity()-S)*getDesiredVelocity(_x,_xa);
+    if(_vd.norm()>_vInit)
+    {
+      vR *= _vInit/vR.norm();
+    }
+  }
+  else
+  {
+    vR = R*v0;
+  }
   
   // Compute modulation matrix used to apply a force Fd when the surface is reached while keeping the norm of the velocity constant 
   // M(x) = B(x)L(x)B(x)
@@ -565,24 +586,19 @@ void MotionController::modulatedRotationDynamics()
   Fd = _targetForce*gamma/_lambda1;
   // Fd = 0.0f;
   float bou = (e2+e3).dot(vR);
-  if(fabs(bou)<1e-3f)
+  if(fabs(bou)<FLT_EPSILON)
   {
-    lb = 1.0f;
+    lb = 0.0f;
   }
   else
   {
     lb = Fd/((e2+e3).dot(vR));
   }
-  lb = Fd/((e2+e3).dot(vR));
-
-  std::cerr << (e2+e3).dot(vR) << std::endl;
-  std::cerr << (e2+e3) << std::endl;
-  std::cerr << vR << std::endl;
 
   float val;
-  // val = (std::pow(_vInit,2.0f)-std::pow(la*e1.dot(vR),2.0f)-2.0f*Fd*la*e1.dot(vR))/
+  // val = (std::pow(vR.norm(),2.0f)-std::pow(la*e1.dot(vR),2.0f)-2.0f*Fd*la*e1.dot(vR))/
   //       (std::pow(e2.dot(vR),2.0f)+std::pow(e3.dot(vR),2.0f));
-  val = (std::pow(_vInit,2.0f)-std::pow(la*e1.dot(vR),2.0f)-2.0f*Fd*la*e1.dot(vR)-std::pow(Fd,2.0f))/
+  val = (std::pow(vR.norm(),2.0f)-std::pow(la*e1.dot(vR),2.0f)-2.0f*Fd*la*e1.dot(vR)-std::pow(Fd,2.0f))/
         (std::pow(e2.dot(vR),2.0f)+std::pow(e3.dot(vR),2.0f));
 
 
@@ -609,24 +625,73 @@ void MotionController::modulatedRotationDynamics()
   // Test other formulation //
   ////////////////////////////
 
-  float delta = std::pow(2.0f*e1.dot(vR)*Fd,2.0f)-4.0f*std::pow(_vInit,2.0f)*(std::pow(Fd,2.0f)-std::pow(_vInit,2.0f));
+  // float delta = std::pow(2.0f*e1.dot(vR)*Fd,2.0f)-4.0f*std::pow(_vInit,2.0f)*(std::pow(Fd,2.0f)-std::pow(_vInit,2.0f));
+  // float delta = std::pow(2.0f*e1.dot(vR)*Fd,2.0f)-4.0f*std::pow(vR.norm(),2.0f)*(-std::pow(vR.norm(),2.0f));
+  float delta = std::pow(2.0f*e1.dot(vR)*Fd,2.0f)-4.0f*std::pow(_vInit,2.0f)*(-std::pow(_vInit,2.0f));
   if(delta < 0.0f)
   {
     delta = 0.0f;
   }
-  float lambda = (-2.0f*e1.dot(vR)*Fd+sqrt(delta))/(2*std::pow(_vInit,2.0f));
-  if(lambda<0.0f)
+  la = (-2.0f*e1.dot(vR)*Fd+sqrt(delta))/(2*std::pow(_vInit,2.0f));
+  if(la<0.0f)
   {
-    lambda = 0.0f;
+    la = 0.0f;
   }
-  std::cerr << "Delta: " << delta << " Lambda: " << lambda << "lb: " << lb << std::endl;
-  L(0,0) = lambda;
+
+    std::cerr << "Delta: " << delta << " la: " << la << " lb: " << lb << std::endl;
+
+  L(0,0) = la;
   L(0,1) = lb;
   L(0,2) = lb;
-  L(1,1) = lambda;
-  L(2,2) = lambda;
+  L(1,1) = la;
+  L(2,2) = la;
 
 
+  ////////////////////////////
+  // Test other formulation //
+  ////////////////////////////
+
+  bou = (e1+e2+e3).dot(vR);
+  if(fabs(bou)<FLT_EPSILON)
+  {
+    lb = 0.0f;
+  }
+  else
+  {
+    lb = Fd/((e1+e2+e3).dot(vR));
+  }
+  // // delta = (vd.squaredNorm()-(std::pow(_e2.dot(vd),2.0f)+std::pow(_e3.dot(vd),2.0f)))/std::pow((_e1+_e2+_e3).dot(vd),2.0f);
+  // float delta = std::pow(2.0f*e1.dot(vR)*Fd,2.0f)-4.0f*std::pow(_vInit,2.0f)*(-std::pow(_vInit,2.0f));
+  // la = sqrt(delta)-1.0f; 
+  // L(0,0) = la;
+  // L(0,1) = lb;
+  // L(0,2) = lb;
+  // L(1,1) = la;
+  // L(2,2) = la;
+
+  delta = std::pow(2.0f*e1.dot(vR)*Fd,2.0f)-4.0f*std::pow(_vInit,2.0f)*(-std::pow(_vInit,2.0f));
+  // delta = std::pow(2.0f*e1.dot(vR)*Fd,2.0f)-4.0f*std::pow(_vInit,2.0f)*(std::pow(Fd,2.0f)-std::pow(_vInit,2.0f));
+  if(delta < 0.0f)
+  {
+    delta = 0.0f;
+  }
+  la = (-2.0f*e1.dot(vR)*Fd+sqrt(delta))/(2*std::pow(_vInit,2.0f));
+  if(la<0.0f)
+  {
+    la = 0.0f;
+  }
+
+    std::cerr << "Delta: " << delta << " la: " << la << " lb: " << lb << std::endl;
+
+  L(0,0) = la+lb;
+  L(0,1) = lb;
+  L(0,2) = lb;
+  L(1,1) = la;
+  L(2,2) = la;
+
+
+
+  // std::cerr << "Delta: " << delta << " la: " << la << " lb: " << lb << std::endl;
 
   // Compute modulation matrix
   Eigen::Matrix3f M;
@@ -643,15 +708,16 @@ void MotionController::modulatedRotationDynamics()
   }
 
   Eigen::Vector3f Ftemp;
-  v = _twist.segment(0,3);
-  _controller.updateDampingGains(_lambda1,_lambda2);
-  Ftemp = _controller.step(_vd,v);
-  std::cerr << "Ftemp: " << Ftemp.transpose() << " val: " << val << std::endl;
-  Eigen::Matrix3f D;
-  D = _controller.getDampingMatrix();
-  std::cerr << "e1'*Ftemp: " << e1.dot(D*_vd) << std::endl;
+  // v = _twist.segment(0,3);
+  // _controller.updateDampingGains(_lambda1,_lambda2);
+  // Ftemp = _controller.step(_vd,v);
+  // std::cerr << "Ftemp: " << Ftemp.transpose() << " val: " << val << std::endl;
+  // Eigen::Matrix3f D;
+  // D = _controller.getDampingMatrix();
+  _Fc.setConstant(0.0f);
+  // std::cerr << "e1'*Ftemp: " << e1.dot(D*_vd) << std::endl;
   
-  _Fc = Ftemp;
+  // _Fc = Ftemp;
   // _Fc = 10*e1;
 
   // std::cerr << "Fc: " << _Fc.transpose() << std::endl;
@@ -671,7 +737,15 @@ void MotionController::modulatedRotationDynamics()
   k /= s;
   K << getSkewSymmetricMatrix(k);
 
-  Eigen::Matrix3f Re = Eigen::Matrix3f::Identity()+s*K+(1-c)*K*K;
+  Eigen::Matrix3f Re;
+  if(fabs(s)< FLT_EPSILON)
+  {
+    Re = Eigen::Matrix3f::Identity();
+  }
+  else
+  {
+    Re = Eigen::Matrix3f::Identity()+s*K+(1-c)*K*K;
+  }
   
   // Convert rotation error into axis angle representation
   Eigen::Vector3f omega;
@@ -860,7 +934,7 @@ void MotionController::updateRobotBasisPose(const geometry_msgs::PoseStamped::Co
 {
   _robotBasisPosition << msg->pose.position.x, msg->pose.position.y, msg->pose.position.z;
 
-  _robotBasisPosition(2) -= 0.025f;
+  _robotBasisPosition(2) -= 0.03f;
   if(!_firstRobotBasisPose)
   {
     _firstRobotBasisPose = true;

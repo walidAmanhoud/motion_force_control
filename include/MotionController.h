@@ -124,6 +124,7 @@ class MotionController
     bool _polishing;
 		bool _controlForce;
 		bool _useOptitrack;
+		bool _useDS;
 
     // Optitrack variables
 		Eigen::Vector3f _robotBasisPosition;
