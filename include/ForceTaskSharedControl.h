@@ -30,7 +30,7 @@
 
 
 #define NB_SAMPLES 50
-#define MAX_XY_REL 300
+#define MAX_XY_REL 350
 #define MAX_FRAME 200
 
 
@@ -138,7 +138,18 @@ class ForceTaskSharedControl
 		float _agreementWeight;
 		float _attractorWeight;
 
+		float _kp;
+		float _ki;
+		float _kd;
+		float _pidInteg = 0.0f;
+		float _pidError = 0.0f;
+		float _pidLastError = 0.0f;
+		float _pidLimit;
+		float _up;
+		float _ui;
+		float _ud;
 
+		float _fc = 0.0f;
 		// Other variables
 		static ForceTaskSharedControl* me;
 		std::mutex _mutex;

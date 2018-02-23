@@ -157,15 +157,38 @@ void ForceTaskSharedControl::stopNode(int sig)
 void ForceTaskSharedControl::computeCommand()
 {
   
+  processFootMouseData();
+
+  Eigen::Vector4f temp;
+  temp = _qd;
   if(_filteredWrench.segment(0,3).norm() > _contactForceThreshold)
   {
     primaryTask(true);
+    _qd = temp;
     forceTask();
   }
   else
   {
     primaryTask(false);
     _Fc.setConstant(0.0f);
+    _fc = 0.0f;
+
+    if(_pidInteg < 0.0f)
+    {
+      
+      _pidInteg =0.0f;
+    }
+    // _pidInteg = 0.0f;
+    // if(_fc<0.0f)
+    // {
+    //   _fc = 0.0f;
+    //   _Fc.setConstant(0.0f);
+    // }
+  }
+
+  if (_vd.norm() > 0.3f) 
+  {
+    _vd = _vd / _vd.norm()*0.3f;
   }
 }
 
@@ -185,6 +208,7 @@ void ForceTaskSharedControl::primaryTask(bool contact)
 
   if(!contact)
   {
+    _omegad.setConstant(0.0f);
     _omegad(0) = _vh(1)*_angularVhLimit/_linearVhLimit;
     Eigen::Vector4f q;
     q = _qd;
@@ -230,6 +254,8 @@ void ForceTaskSharedControl::forceTask()
   _e1 = -_normalDirection;
   Eigen::Matrix3f S = _e1*_e1.transpose();
 
+  _forceNorm = (_wRb.col(2)*_wRb.col(2).transpose()*Fn).norm();
+
   // Compute rotation error between current orientation and normal direction using Rodrigues' law
   Eigen::Matrix3f K;
   Eigen::Vector3f k;
@@ -239,8 +265,16 @@ void ForceTaskSharedControl::forceTask()
   k /= s;
   K << getSkewSymmetricMatrix(k);
 
-  Eigen::Matrix3f Re = Eigen::Matrix3f::Identity()+s*K+(1-c)*K*K;
-  
+  Eigen::Matrix3f Re;
+  if(fabs(s)< FLT_EPSILON)
+  {
+    Re = Eigen::Matrix3f::Identity();
+  }
+  else
+  {
+    Re = Eigen::Matrix3f::Identity()+s*K+(1-c)*K*K;
+  }
+
   // Convert rotation error into axis angle representation
   Eigen::Vector4f qtemp = rotationMatrixToQuaternion(Re);
 
@@ -248,10 +282,13 @@ void ForceTaskSharedControl::forceTask()
   float angle;
   Eigen::Vector3f omega;
   quaternionToAxisAngle(qtemp,omega,angle);
+  omega *= angle;
 
   Eigen::Vector3f damping;
   damping =-fabs(angle)*w;
+  std::cerr << _wRb.transpose()*_normalDirection << std::endl;
 
+    std::cerr <<"angle: " << angle <<std::endl;
   if(fabs(angle)<M_PI/3.0f)
   {
     if(updateQuaternion)
@@ -277,64 +314,127 @@ void ForceTaskSharedControl::forceTask()
     // Compute desired force along surface normal
     Eigen::Vector3f Fd = _targetForce*_e1;
 
+    // std::cerr <<"Fd: " << Fd.transpose() << std::endl;
+    // std::cerr <<"Fn: " << Fn.transpose() << std::endl;
     // Check if force control activated and compute contact force following the specified dynamics
     if(_controlForce)
     {
+      // // Compute force error
+      // Eigen::Vector3f Fe = Fd-(-Fn);
+      
+      // // Compute force stiffness rate gain from measured speed
+      // float alpha = 1-std::tanh(50*vn.norm());
+
+      // // Integrate contact force magnitude dynamics
+      // _Fc += _dt*(_k1*alpha*Fe-_k2*(1-alpha)*Fd);
+
+      // if(_Fc.dot(_e1) < _minFc*alpha)
+      // {
+      //   _Fc = _minFc*alpha*_e1;
+      // }
+      // else if(_Fc.dot(_e1) > _maxFc)
+      // {
+      //   _Fc = _maxFc*_e1;
+      // }
+
       // Compute force error
-      Eigen::Vector3f Fe = Fd-(-Fn);
+      float fe = _targetForce-_forceNorm;
       
       // Compute force stiffness rate gain from measured speed
       float alpha = 1-std::tanh(50*vn.norm());
 
       // Integrate contact force magnitude dynamics
-      _Fc += _dt*(_k1*alpha*Fe-_k2*(1-alpha)*Fd);
+      _fc += _dt*(_k1*alpha*fe-_k2*(1-alpha)*_fc);
 
-      if(_Fc.dot(_e1) < _minFc*alpha)
+      if(_fc < _minFc*alpha)
       {
-        _Fc = _minFc*alpha*_e1;
+        _fc = _minFc*alpha;
       }
-      else if(_Fc.dot(_e1) > _maxFc)
+      else if(_fc > _maxFc)
       {
-        _Fc = _maxFc*_e1;
+        _fc = _maxFc;
       }
+
+      // _Fc = _fc*_wRb.col(2);
+      _fc = 0.0f;
+      _Fc.setConstant(0.0f);
+      // _pidError = (_targetForce-force.norm());
+      _pidError = (_targetForce-_forceNorm);
+      _pidInteg += _dt*_pidError;
+      _up = _kp*_pidError;
+      _ui = _ki*_pidInteg;
+      _ud = _kd*(_pidError-_pidLastError)/_dt;
+      _pidLastError = _pidError;
+
+      if(_ui < -_pidLimit)
+      {
+        _ui = -_pidLimit;
+      }
+      else if(_ui > _pidLimit)
+      {
+        _ui = _pidLimit;
+      }
+
+      float command = _up+_ui+_ud;
+      if(command<-_pidLimit)
+      {
+        command = -_pidLimit;
+      }
+      else if(command>_pidLimit)
+      {
+        command = _pidLimit;
+      }
+      std::cerr << "up " << _up << " ui " << _ui << " ud " << _ud <<  " error " << _pidError << std::endl;
+
+      // Eigen::Vector3f vf = -command*_wRb*normalDirection;
+      Eigen::Vector3f vf = command*_wRb.col(2);
 
       std::cerr << "contact force: " << _Fc.transpose() << " fc: " << _Fc.norm() << " vn: " << vn.norm() << std::endl;
+  
+      float ch = _agreementWeight*(vf).dot(_vd);
+      float ct = 0.0f;
+      if(_forceNorm > _targetForce)
+      {
+          ct = 1.0f;
+      }
+      else
+      {
+        ct = (-cos(_forceNorm*M_PI/(_targetForce))+1)/2.0f;
+      }
+
+      c = ch+ct;
+      _alpha = c;
+
+      if(_alpha>_arbitrationLimit)
+      {
+        _alpha = _arbitrationLimit;
+      }
+      else if(_alpha < 0.0f)
+      {
+        _alpha = 0.0f;
+      }
+
+      _vd = (1-_alpha)*_vd+_alpha*vf+_vh(1)*_wRb.col(1); 
+      // _vd = (1-_alpha)*_vd+_vh(1)*_wRb.col(1); 
+
+
+      std::cerr << "alpha: " << _alpha << " c: " << c << " ch: " << ch <<" ct: " << ct << std::endl;
+      // std::cerr << "Fc: " << _Fc.transpose() << std::endl;
+      std::cerr << "vtask: " << _vd.norm() << " vf: " << vf.norm() << " vu: " << std::endl;
+      std::cerr << "omegad: " << _omegad.transpose() << std::endl;
     }
     else
     {
       _Fc.setConstant(0.0f);
+      _fc = 0.0f;
+      _pidInteg = 0.0f;
     }
-
-
-    float ch = _agreementWeight*(_Fc.normalized()).dot(_vd.normalized());
-    float ct = 0.0f;
-    if(_forceNorm > _targetForce)
-    {
-        ct = 1.0f;
-    }
-    else
-    {
-      ct = (-cos(_forceNorm*M_PI/(_targetForce))+1)/2.0f;
-    }
-
-    c = ch+ct;
-
-    _alpha = c;
-
-    if(_alpha>_arbitrationLimit)
-    {
-      _alpha = _arbitrationLimit;
-    }
-    else if(_alpha < 0.0f)
-    {
-      _alpha = 0.0f;
-    }
-
-    _vd = (1-_alpha)*_vd+_vh(1)*_wRb.col(1); 
   }
   else
   {
     _Fc.setConstant(0.0f);
+    _pidInteg = 0.0f;
+    _fc = 0.0f;
   }
 }
 
@@ -452,6 +552,7 @@ void ForceTaskSharedControl::quaternionToAxisAngle(Eigen::Vector4f q, Eigen::Vec
     
   }
 
+  std::cerr << q.transpose() << std::endl;
   angle = 2*std::acos(q(0));
 }
 
@@ -590,6 +691,7 @@ void ForceTaskSharedControl::processCursorEvent(float relX, float relY, bool new
   {
     // Track desired position
     _vh = -_convergenceRate*(_x-_xd);
+    _vh.setConstant(0.0f);
   }
   else
   {
@@ -677,12 +779,6 @@ void ForceTaskSharedControl::publishData()
 
   _pubDesiredOrientation.publish(_msgDesiredOrientation);
 
-  _msgTaskAttractor.header.frame_id = "world";
-  _msgTaskAttractor.header.stamp = ros::Time::now();
-  _msgTaskAttractor.point.x = _taskAttractor(0);
-  _msgTaskAttractor.point.y = _taskAttractor(1);
-  _msgTaskAttractor.point.z = _taskAttractor(2);
-  _pubTaskAttractor.publish(_msgTaskAttractor);
 
   _msgArrowMarker.points.clear();
   geometry_msgs::Point p1,p2;
@@ -815,4 +911,9 @@ void ForceTaskSharedControl::dynamicReconfigureCallback(motion_force_control::fo
   _angularVhLimit = config.angularVhLimit;
   _arbitrationLimit = config.arbitrationLimit;
   _agreementWeight = config.agreementWeight;
+  _pidLimit = config.pidLimit;
+  _kp = config.kp;
+  _ki = config.ki;
+  _kd = config.kd;
+
 }
