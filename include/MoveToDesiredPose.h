@@ -41,7 +41,7 @@ class MoveToDesiredPose
 		Eigen::Vector3f _vd;
 		float _jointTolerance;
 		bool _firstRealPoseReceived;
-		float _toolOffset = 0.114f;
+		float _toolOffset;
 
 
 		// Class variables

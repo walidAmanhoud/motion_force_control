@@ -71,10 +71,10 @@ class MotionController
 		
 
 		// Tool variables
-		float _loadMass = 0.132f;
+		float _loadMass;
 		Eigen::Vector3f _loadOffset;
 		Eigen::Vector3f _gravity;
-		float _toolOffset = 0.114f;
+		float _toolOffset;
 		// float _toolOffset = 0.0f;
 
 		// End effector state variables

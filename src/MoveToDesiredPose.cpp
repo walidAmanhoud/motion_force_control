@@ -24,6 +24,7 @@ bool MoveToDesiredPose::init()
   _qd.setConstant(0.0f);
   _firstRealPoseReceived = false;
   _stop = false;
+  _toolOffset = 0.14f;
 
 
   _subRealPose = _n.subscribe("/lwr/ee_pose", 1, &MoveToDesiredPose::updateRealPose, this, ros::TransportHints().reliable().tcpNoDelay());
