@@ -9,6 +9,7 @@ add_definitions(-std=c++11)
 find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
+  gazebo_ros
   std_msgs
   message_generation
   kdl_parser
@@ -21,6 +22,8 @@ find_package(catkin REQUIRED COMPONENTS
 #    # FootMouseMsg.msg
 # )
 
+find_package(Eigen3 REQUIRED)
+
 
 ## Generate added messages and services
 generate_messages(DEPENDENCIES std_msgs)
@@ -28,7 +31,8 @@ generate_messages(DEPENDENCIES std_msgs)
 # Generate dynamic reconfigure parameters
 generate_dynamic_reconfigure_options(cfg/unifiedMotionForceController_params.cfg 
                                      cfg/motionController_params.cfg
-                                     cfg/forceTaskSharedControl_params.cfg)
+                                     cfg/forceTaskSharedControl_params.cfg
+                                     cfg/modulatedDS_params.cfg)
 
 catkin_package(
   INCLUDE_DIRS include
@@ -37,6 +41,7 @@ catkin_package(
   # DEPENDS Eigen
  )
 
+include_directories(${EIGEN3_INCLUDE_DIR})
 include_directories(include ${catkin_INCLUDE_DIRS})
 
 add_executable(unifiedMotionForceController src/unifiedMotionForceController_node.cpp src/UnifiedMotionForceController.cpp)
@@ -55,6 +60,9 @@ add_executable(forceTaskSharedControl src/forceTaskSharedControl_node.cpp src/Fo
 target_link_libraries(forceTaskSharedControl ${catkin_LIBRARIES})
 add_dependencies(forceTaskSharedControl ${PROJECT_NAME}_gencpp)
 
+add_executable(modulatedDS src/modulatedDS_node.cpp src/ModulatedDS.cpp)
+target_link_libraries(modulatedDS ${catkin_LIBRARIES})
+add_dependencies(modulatedDS ${PROJECT_NAME}_gencpp)
 
 #this step is required to have the files how up in qtcreator
 # file(GLOB HEADERS "include/*.h")
@@ -63,8 +71,8 @@ add_dependencies(forceTaskSharedControl ${PROJECT_NAME}_gencpp)
 ## Declare a cpp library
 add_library(passive_ds_force_controller src/PassiveDsForceController.cpp)
 
-FILE(GLOB SRCS src/UnifiedMotionForceController.cpp src/MotionController.cpp src/MoveToDesiredPose.cpp src/PassiveDsForceController.cpp)
-FILE(GLOB INCS src/UnifiedMotionForceController.h src/MotionController.h src/MoveToDesiredPose.h src/PassiveDsForceController.h)
+FILE(GLOB SRCS src/UnifiedMotionForceController.cpp src/MotionController.cpp src/MoveToDesiredPose.cpp src/PassiveDsForceController.cpp src/ModulatedDS.cpp)
+FILE(GLOB INCS include/UnifiedMotionForceController.h include/MotionController.h include/MoveToDesiredPose.h include/PassiveDsForceController.h include/ModulatedDS.h)
 
 add_library(${PROJECT_NAME} ${SRCS} ${INCS} )
 target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES})
