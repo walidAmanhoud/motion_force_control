@@ -60,9 +60,14 @@ add_executable(forceTaskSharedControl src/forceTaskSharedControl_node.cpp src/Fo
 target_link_libraries(forceTaskSharedControl ${catkin_LIBRARIES})
 add_dependencies(forceTaskSharedControl ${PROJECT_NAME}_gencpp)
 
+
 add_executable(modulatedDS src/modulatedDS_node.cpp src/ModulatedDS.cpp)
 target_link_libraries(modulatedDS ${catkin_LIBRARIES})
 add_dependencies(modulatedDS ${PROJECT_NAME}_gencpp)
+
+add_executable(surfaceLearning src/surfaceLearning_node.cpp src/SurfaceLearning.cpp)
+target_link_libraries(surfaceLearning ${catkin_LIBRARIES})
+add_dependencies(surfaceLearning ${PROJECT_NAME}_gencpp)
 
 #this step is required to have the files how up in qtcreator
 # file(GLOB HEADERS "include/*.h")
