@@ -55,6 +55,8 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
   _stop = false;
 
   _sequenceID = 0;
+  _normalDistance = 0.0f;
+  _normalForce = 0.0f;
 
   if(_useOptitrack)
   {
@@ -172,10 +174,10 @@ bool ModulatedDS::init()
 
   ROS_INFO("Filename: %s", _fileName.c_str());
 
-  _outputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data/"+_fileName+"_data.txt");
+  _outputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data/"+_fileName+".txt");
 
 
-  if(!_n.getParamCached("/ds_param/damping_eigval0",_lambda1))
+  if(!_n.getParamCached("/lwr/ds_param/damping_eigval0",_lambda1))
   {
     ROS_ERROR("Cannot read first eigen value of passive ds controller");
     return false;
@@ -286,18 +288,20 @@ bool ModulatedDS::init()
 
 void ModulatedDS::run()
 {
-  while (!_stop) 
-  {
 
+  _timeInit = ros::Time::now().toSec();
+
+  while (!_stop && ros::Time::now().toSec()-_timeInit < _duration) 
+  {
     // std::cerr << (int) _firstRobotPose << (int) _firstRobotTwist  << (int) _firstOptitrackRobotPose << (int) _firstOptitrackP1Pose << (int) _firstOptitrackP2Pose << (int) _firstOptitrackP3Pose << std::endl;
-    if(_firstRobotPose && _firstRobotTwist && /*_wrenchBiasOK &&*/
+    if(_firstRobotPose && _firstRobotTwist && _wrenchBiasOK &&
        _firstOptitrackRobotPose && _firstOptitrackP1Pose &&
        _firstOptitrackP2Pose && _firstOptitrackP3Pose)
     {
       _mutex.lock();
 
       // Check for update of passive ds controller eigen value
-      ros::param::getCached("/ds_param/damping_eigval0",_lambda1);
+      ros::param::getCached("/lwr/ds_param/damping_eigval0",_lambda1);
 
       // Compute control command
       computeCommand();
@@ -410,6 +414,11 @@ void ModulatedDS::computeProjectionOnSurface()
   {
     _normalDistance = 0.0f;
   }
+
+  // Compute normal force
+  Eigen::Vector3f F = _filteredWrench.segment(0,3);
+  _normalForce = _e1.dot(-_wRb*F);
+
 }
 
 
@@ -733,7 +742,8 @@ void ModulatedDS::logData()
                 << _vd.transpose() << " "
                 << _e1.transpose() << " "
                 << _normalDistance << " "
-                << _Fd << " "
+                << _normalForce << " "
+                << _Fd*_lambda1 << " "
                 << _sequenceID << std::endl;
 }
 
@@ -1108,4 +1118,5 @@ void ModulatedDS::dynamicReconfigureCallback(motion_force_control::modulatedDS_p
   _convergenceRate = config.convergenceRate;
   _filteredForceGain = config.filteredForceGain;
   _velocityLimit = config.velocityLimit;
+  _duration = config.duration;
 }

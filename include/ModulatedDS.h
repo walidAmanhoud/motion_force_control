@@ -112,6 +112,9 @@ class ModulatedDS
     Eigen::Vector3f _xAttractor;     
     float _vInit; 
     float _normalDistance;
+    float _normalForce;
+    double _duration;
+    double _timeInit;
 
 		// Control variables
     float _convergenceRate;       // Convergence rate of the DS

@@ -105,9 +105,9 @@ void MoveToDesiredPose::computeCommand()
 	std::cerr << _x.transpose() << std::endl;
 
   // Bound desired velocity  
-  if(_vd.norm()>0.3f)
+  if(_vd.norm()>0.2f)
   {
-    _vd *= 0.3f/_vd.norm();
+    _vd *= 0.2f/_vd.norm();
   }
 }
 
