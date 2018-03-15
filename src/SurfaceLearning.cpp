@@ -2,11 +2,12 @@
 
 SurfaceLearning* SurfaceLearning::me = NULL;
 
-SurfaceLearning::SurfaceLearning(ros::NodeHandle &n, double frequency, std::string fileName):
+SurfaceLearning::SurfaceLearning(ros::NodeHandle &n, double frequency, std::string fileName, Mode mode):
   _n(n),
   _loopRate(frequency),
   _dt(1.0f/frequency),
-  _fileName(fileName)
+  _fileName(fileName),
+  _mode(mode)
 {
   me = this;
 
@@ -25,8 +26,15 @@ SurfaceLearning::SurfaceLearning(ros::NodeHandle &n, double frequency, std::stri
 
   _xd.setConstant(0.0f);
   _vd.setConstant(0.0f);
+  _vdOrig.setConstant(0.0f);
+  _vdR.setConstant(0.0f);
   _omegad.setConstant(0.0f);
   _qd.setConstant(0.0f);
+  _e1 << 0.0f, 0.0f, 1.0f;
+  _xAttractor << -0.55f,0.05f,0.2f;
+
+  _Fd = 0.0f;
+
 
 
   _firstRobotPose = false;
@@ -39,6 +47,32 @@ SurfaceLearning::SurfaceLearning(ros::NodeHandle &n, double frequency, std::stri
   _stop = false;
 
   _sequenceID = 0;
+  _normalDistance = 0.0f;
+
+
+  _msgArrowMarker.header.frame_id = "world";
+  _msgArrowMarker.header.stamp = ros::Time();
+  _msgArrowMarker.ns = "marker_test_arrow";
+  _msgArrowMarker.id = 0;
+  _msgArrowMarker.type = visualization_msgs::Marker::ARROW;
+  _msgArrowMarker.action = visualization_msgs::Marker::ADD;
+  geometry_msgs::Point p1, p2;
+  p1.x = 0.0f;
+  p1.y = 0.0f;
+  p1.z = 0.0f;
+  p2.x = 0.0f+0.3f*_e1(0);
+  p2.x = 0.0f+0.3f*_e1(1);
+  p2.x = 0.0f+0.3f*_e1(2);
+  _msgArrowMarker.scale.x = 0.05;
+  _msgArrowMarker.scale.y = 0.1;
+  _msgArrowMarker.scale.z = 0.1;
+  _msgArrowMarker.color.a = 1.0;
+  _msgArrowMarker.color.r = 1.0;
+  _msgArrowMarker.color.g = 0.0;
+  _msgArrowMarker.color.b = 0.0;
+  _msgArrowMarker.points.push_back(p1);
+  _msgArrowMarker.points.push_back(p2);
+
 }
 
 
@@ -54,21 +88,61 @@ bool SurfaceLearning::init()
   _pubDesiredOrientation = _n.advertise<geometry_msgs::Quaternion>("/lwr/joint_controllers/passive_ds_command_orient", 1);
   _pubDesiredWrench = _n.advertise<geometry_msgs::Wrench>("/lwr/joint_controllers/passive_ds_command_force", 1);
   _pubFilteredWrench = _n.advertise<geometry_msgs::WrenchStamped>("SurfaceLearning/filteredWrench", 1);
-
+  _pubMarker = _n.advertise<visualization_msgs::Marker>("SurfaceLearning/markers", 10);
 
   signal(SIGINT,SurfaceLearning::stopNode);
+
+  if(!_n.getParamCached("/lwr/ds_param/damping_eigval0",_lambda1))
+  {
+    ROS_ERROR("Cannot read first eigen value of passive ds controller");
+    return false;
+  }
+
 
 
   ROS_INFO("Filename: %s", _fileName.c_str());
 
-  _outputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data/"+_fileName+"_surface_data.txt");
 
-
-  if(!_outputFile.is_open())
+  if(_mode == LOGGING)
   {
-    ROS_ERROR("Cannot open data file");
+    ROS_INFO("Mode: LOGGING");
+  }
+  else if(_mode == TESTING)
+  {
+    ROS_INFO("Mode: TESTING");
+  }
+  else
+  {
+    ROS_ERROR("Mode not recognized");
     return false;
   }
+
+
+  if(_mode == LOGGING)
+  {
+    _outputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data/"+_fileName+"_data.txt");
+    if(!_outputFile.is_open())
+    {
+      ROS_ERROR("Cannot open data file");
+      return false;
+    } 
+  }
+  else if(_mode == TESTING)
+  {
+    std::string modelPath = ros::package::getPath(std::string("motion_force_control"))+"/data/"+_fileName+"_model.txt";
+    _inputFile.open(modelPath);
+    if(!_inputFile.is_open())
+    {
+      ROS_ERROR("Cannot open svm file");
+      return false;
+    }
+    else
+    {
+      _inputFile.close();
+      _svm.loadModel(modelPath);
+    }    
+  }
+
 
   if (_n.ok()) 
   { 
@@ -89,6 +163,8 @@ void SurfaceLearning::run()
 {
   while (!_stop) 
   {
+
+    // std::cerr << (int) _firstRobotPose << " " << (int) _firstRobotTwist << " " << (int) _wrenchBiasOK << std::endl;
     if(_firstRobotPose && _firstRobotTwist && _wrenchBiasOK)
     {
       _mutex.lock();
@@ -99,8 +175,11 @@ void SurfaceLearning::run()
       // Publish data to topics
       publishData();
 
-      // Log data
-      logData();
+      if(_mode == LOGGING)
+      {
+        // Log data
+        logData();        
+      }
 
       _mutex.unlock();
     }
@@ -119,6 +198,11 @@ void SurfaceLearning::run()
   ros::spinOnce();
   _loopRate.sleep();
 
+  if(_mode == LOGGING)
+  {
+    _outputFile.close();
+  }
+
   ros::shutdown();
 }
 
@@ -131,6 +215,27 @@ void SurfaceLearning::stopNode(int sig)
 void SurfaceLearning::computeCommand()
 {
 
+  if(_mode == TESTING)
+  {
+    _svm.preComputeKernel(true);
+    _normalDistance = _svm.calculateGamma(_x.cast<double>());
+    _e1 = -_svm.calculateGammaDerivative(_x.cast<double>()).cast<float>();
+    _e1.normalize();
+    std::cerr << _normalDistance << " " << _e1.transpose() << std::endl;    
+    if(_normalDistance<0.0f)
+    {
+      _normalDistance = 0.0f;
+    }
+
+    // Check for update of passive ds controller eigen value
+    ros::param::getCached("/lwr/ds_param/damping_eigval0",_lambda1);
+
+    computeOriginalDynamics();
+    rotatingDynamics();
+    forceModulation();
+    // _vd = _vdR;
+  }
+
   computeDesiredOrientation();
 }
 
@@ -138,7 +243,203 @@ void SurfaceLearning::computeCommand()
 
 void SurfaceLearning::computeDesiredOrientation()
 {
-  _omegad.setConstant(0.0f); 
+  if(_mode == TESTING)
+  {
+    // Compute rotation error between current orientation and plane orientation using Rodrigues' law
+    Eigen::Vector3f k;
+    k = (-_wRb.col(2)).cross(-_e1);
+    float c = (-_wRb.col(2)).transpose()*(-_e1);  
+    float s = k.norm();
+    k /= s;
+    
+    Eigen::Matrix3f K;
+    K << getSkewSymmetricMatrix(k);
+
+    Eigen::Matrix3f Re;
+    if(fabs(s)< FLT_EPSILON)
+    {
+      Re = Eigen::Matrix3f::Identity();
+    }
+    else
+    {
+      Re = Eigen::Matrix3f::Identity()+s*K+(1-c)*K*K;
+    }
+    
+    // Convert rotation error into axis angle representation
+    Eigen::Vector3f omega;
+    float angle;
+    Eigen::Vector4f qtemp = rotationMatrixToQuaternion(Re);
+    quaternionToAxisAngle(qtemp,omega,angle);
+
+    // Compute final quaternion on plane
+    Eigen::Vector4f qf = quaternionProduct(qtemp,_q);
+
+    // Perform quaternion slerp interpolation to progressively orient the end effector while approaching the plane
+    _qd = slerpQuaternion(_q,qf,1.0f-std::tanh(5.0f*_normalDistance));
+    // _qd = slerpQuaternion(_q,qf,1.0f);
+
+    // Compute needed angular velocity to perform the desired quaternion
+    Eigen::Vector4f qcurI, wq;
+    qcurI(0) = _q(0);
+    qcurI.segment(1,3) = -_q.segment(1,3);
+    wq = 5.0f*quaternionProduct(qcurI,_qd-_q);
+    Eigen::Vector3f omegaTemp = _wRb*wq.segment(1,3);
+    _omegad = omegaTemp;    
+  }
+  else if(_mode == LOGGING)
+  {
+    _qd = _q;
+    _omegad.setConstant(0.0f); 
+  }
+
+}
+
+void SurfaceLearning::computeOriginalDynamics()
+{
+
+    Eigen::Vector3f dir;
+    dir = _e1;
+    dir.normalize();
+    _vdOrig = 0.25f*dir;
+}
+
+
+Eigen::Vector3f SurfaceLearning::getCyclingMotionVelocity(Eigen::Vector3f position, Eigen::Vector3f attractor)
+{
+  Eigen::Vector3f velocity;
+
+  position = position-attractor;
+
+  velocity(2) = -position(2);
+
+  float R = sqrt(position(0) * position(0) + position(1) * position(1));
+  float T = atan2(position(1), position(0));
+
+  float r = 0.05f;
+  float omega = M_PI;
+
+  velocity(0) = -(R-r) * cos(T) - R * omega * sin(T);
+  velocity(1) = -(R-r) * sin(T) + R * omega * cos(T);
+
+  return velocity;
+}
+
+
+void SurfaceLearning::rotatingDynamics()
+{
+    Eigen::Vector3f vdContact;
+    vdContact = (Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*getCyclingMotionVelocity(_x,_xAttractor);
+    vdContact.normalize();
+
+    // Compute rotation angle
+    float angle = std::acos(_vdOrig.normalized().dot(vdContact));
+    float theta = (1.0f-std::tanh(10*_normalDistance))*angle;
+
+    // Compute rotation direction
+    Eigen::Vector3f u = (_vdOrig.normalized()).cross(vdContact);
+    Eigen::Matrix3f K,R;
+
+    if(u.norm() < FLT_EPSILON)
+    {
+      R.setIdentity();
+    }
+    else
+    {
+      u/=u.norm();
+      K = getSkewSymmetricMatrix(u);
+      R = Eigen::Matrix3f::Identity()+std::sin(theta)*K+(1.0f-std::cos(theta))*K*K;
+    }
+    _vdR = R*_vdOrig;
+}
+
+void SurfaceLearning::forceModulation()
+{
+  // Extract linear speed, force and torque data
+
+  // Compute modulation matrix used to apply a force Fd when the surface is reached while keeping the norm of the velocity constant 
+  // M(x) = B(x)L(x)B(x)
+  // B(x) = [e1 e2 e3] with e1 = -n is an orthognal basis defining the modulation frame
+  //        [la lb lb] 
+  // L(x) = [0  lc 0 ] is the matrix defining the modulation gains to apply on the frame
+  //        [0  0  lc]
+
+  // Compute modulation frame B(x)
+  Eigen::Vector3f xDir;
+  xDir << 1.0f,0.0f,0.0f;
+  Eigen::Matrix3f B;
+  _e2 = (Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*xDir;
+  _e2.normalize();
+  _e3 = _e1.cross(_e2);
+  _e3.normalize();
+  B.col(0) = _e1;
+  B.col(1) = _e2;
+  B.col(2) = _e3;
+
+  // Compute force profile
+  if(_lambda1<1.0f)
+  {
+    _lambda1 = 1.0f;
+  }
+
+  _Fd = 10.0f*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;
+
+  // Compute diagonal gain matrix L(x)
+  Eigen::Matrix3f L = Eigen::Matrix3f::Zero();
+  float la, lb, lc;
+
+  float temp, delta;
+
+  temp = (_e1+_e2+_e3).dot(_vdR);
+  if(fabs(temp)<FLT_EPSILON)
+  {
+    lb = 0.0f;
+  }
+  else
+  {
+    lb = _Fd/temp;
+  }
+
+  // if(_constraint == VELOCITY_NORM)
+  // {
+    // delta = std::pow(2.0f*_e1.dot(_vdR)*lb*temp,2.0f)-4.0f*std::pow(_vdOrig.norm(),2.0f)*(std::pow(lb*temp,2.0f)-std::pow(_vdOrig.norm(),2.0f));
+  // }
+  // else if(_constraint == APPARENT_VELOCITY_NORM)
+  // {
+    delta = std::pow(2.0f*_e1.dot(_vdR)*lb*temp,2.0f)+4.0f*std::pow(_vdOrig.norm(),4.0f); 
+  // }
+
+  if(delta < 0.0f)
+  {
+    delta = 0.0f;
+  }
+  la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdOrig.norm(),2.0f));
+
+  L(0,0) = la+lb;
+  L(0,1) = lb;
+  L(0,2) = lb;
+  L(1,1) = la;
+  L(2,2) = la;
+
+  // Compute modulation matrix
+  Eigen::Matrix3f M;
+  M = B*L*B.transpose();
+
+  // Apply force modulation to the rotating dynamics
+
+  _vd = M*_vdR;
+
+  std::cerr << "delta: " << delta << " la: " << la << " lb: " << lb << " vd: " << _vd.norm() << std::endl;
+
+
+  // Bound desired velocity  
+  if(_vd.norm()>0.4f)
+  {
+    _vd *= 0.4f/_vd.norm();
+  }
+
+  _Fc.setConstant(0.0f);
+
+  std::cerr << "vd after scaling: " << _vd.norm() << " distance: " << _normalDistance << std::endl;
 }
 
 
@@ -170,7 +471,6 @@ void SurfaceLearning::publishData()
   _msgDesiredOrientation.z = _qd(3);
   _pubDesiredOrientation.publish(_msgDesiredOrientation);
 
-
   _msgFilteredWrench.header.frame_id = "world";
   _msgFilteredWrench.header.stamp = ros::Time::now();
   _msgFilteredWrench.wrench.force.x = _filteredWrench(0);
@@ -181,7 +481,6 @@ void SurfaceLearning::publishData()
   _msgFilteredWrench.wrench.torque.z = _filteredWrench(5);
   _pubFilteredWrench.publish(_msgFilteredWrench);
 
-
   _msgDesiredWrench.force.x = _Fc(0);
   _msgDesiredWrench.force.y = _Fc(1);
   _msgDesiredWrench.force.z = _Fc(2);
@@ -189,6 +488,18 @@ void SurfaceLearning::publishData()
   _msgDesiredWrench.torque.y = 0.0f;
   _msgDesiredWrench.torque.z = 0.0f;
   _pubDesiredWrench.publish(_msgDesiredWrench);
+
+  _msgArrowMarker.points.clear();
+  geometry_msgs::Point p1, p2;
+  p1.x = _x(0);
+  p1.y = _x(1);
+  p1.z = _x(2);
+  p2.x = _x(0)+0.3f*_e1(0);
+  p2.y = _x(1)+0.3f*_e1(1);
+  p2.z = _x(2)+0.3f*_e1(2);
+  _msgArrowMarker.points.push_back(p1);
+  _msgArrowMarker.points.push_back(p2);
+  _pubMarker.publish(_msgArrowMarker);
 }
 
 
@@ -207,7 +518,10 @@ void SurfaceLearning::updateRobotPose(const geometry_msgs::Pose::ConstPtr& msg)
   if((_x-temp).norm()>FLT_EPSILON)
   {
     _sequenceID++;
-    std::cerr << _sequenceID << std::endl;
+    if(_mode == LOGGING)
+    {
+      std::cerr << _sequenceID << std::endl;
+    }
   }
 
   if(!_firstRobotPose)
@@ -256,7 +570,6 @@ void SurfaceLearning::updateRobotWrench(const geometry_msgs::WrenchStamped::Cons
     {
       _wrenchBias /= NB_SAMPLES;
       _wrenchBiasOK = true;
-      std::cerr << "Bias: " << _wrenchBias.transpose() << std::endl;
     }
   }
 

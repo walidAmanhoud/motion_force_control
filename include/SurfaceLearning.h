@@ -23,11 +23,16 @@
 #include "geometry_msgs/WrenchStamped.h"
 #include "geometry_msgs/Wrench.h"
 #include "geometry_msgs/Twist.h"
+#include "armadillo"
+#include "svm_grad.h"
 
 #define NB_SAMPLES 50
 
 class SurfaceLearning 
 {
+	public:
+
+		enum Mode {LOGGING = 0, TESTING = 1};
 
 	private:
 
@@ -45,6 +50,7 @@ class SurfaceLearning
 		ros::Publisher _pubDesiredOrientation;  // Publish desired orientation
 		ros::Publisher _pubDesiredWrench;				// Publish desired twist
 		ros::Publisher _pubFilteredWrench;
+		ros::Publisher _pubMarker;
 		
 		// Subsciber and publisher messages declaration
 		geometry_msgs::Pose _msgRealPose;
@@ -53,7 +59,8 @@ class SurfaceLearning
 		geometry_msgs::Twist _msgDesiredTwist;
 		geometry_msgs::Wrench _msgDesiredWrench;
 		geometry_msgs::WrenchStamped _msgFilteredWrench;
-		
+		visualization_msgs::Marker _msgArrowMarker;
+
 		// Tool variables
 		float _loadMass;
 		float _toolOffset;
@@ -71,12 +78,19 @@ class SurfaceLearning
 		Eigen::Matrix<float,6,1> _filteredWrench;
 		float _filteredForceGain;
 		int _wrenchCount = 0;
+		float _normalDistance;
 
 		// End effector desired variables
 		Eigen::Vector4f _qd;				// Desired end effector quaternion (4x1)
 		Eigen::Vector3f _omegad;		// Desired angular velocity [rad/s] (3x1)
 		Eigen::Vector3f _xd;				// Desired position [m] (3x1)
 		Eigen::Vector3f _vd;				// Desired velocity [m/s] (3x1)
+		Eigen::Vector3f _e1;
+		Eigen::Vector3f _e2;
+		Eigen::Vector3f _e3;
+		Eigen::Vector3f _xAttractor;
+		float _lambda1;
+		float _Fd;
 
 
 		// Control variables
@@ -100,11 +114,20 @@ class SurfaceLearning
 
 
 		std::ofstream _outputFile;
+		std::ifstream _inputFile;
+		SVMGrad _svm;
+		Mode _mode;
+
+		Eigen::Vector3f _vdOrig;
+
+		Eigen::Vector3f _vdR;
+
+
 
 	public:
 
 		// Class constructor
-		SurfaceLearning(ros::NodeHandle &n, double frequency, std::string fileName);
+		SurfaceLearning(ros::NodeHandle &n, double frequency, std::string fileName, Mode mode);
 
 		bool init();
 
@@ -115,6 +138,14 @@ class SurfaceLearning
 	static void stopNode(int sig);
 		
     void computeCommand();
+
+		void computeOriginalDynamics();
+
+		Eigen::Vector3f getCyclingMotionVelocity(Eigen::Vector3f position, Eigen::Vector3f attractor);
+
+		void rotatingDynamics();
+
+		void forceModulation();
 
 		void computeDesiredOrientation();
     

@@ -5,20 +5,37 @@ int main(int argc, char **argv)
 {
   ros::init(argc, argv, "surfaceLearning");
   ros::NodeHandle n;
-  float frequency = 500.0f;
+  float frequency = 200.0f;
   
   std::string fileName;
 
-  if(argc == 2) 
+  SurfaceLearning::Mode mode;
+
+  if(argc == 4) 
   {
     fileName = std::string(argv[1]);
+
+    if(std::string(argv[2]) == "-m" && std::string(argv[3]) == "l")
+    {
+      mode = SurfaceLearning::Mode::LOGGING;
+    }
+    else if(std::string(argv[2]) == "-m" && std::string(argv[3]) == "t")
+    {
+      mode = SurfaceLearning::Mode::TESTING;
+    }
+    else
+    {
+      ROS_ERROR("Wrong mode arguments, the command line arguments should be: fileName -m(mode) l(logging) or t(testing)");
+      return 0;
+    }
   }
   else
   {
-    fileName = "test" ;
+    ROS_ERROR("Wrong number of arguments, the command line arguments should be: fileName -m(mode) l(logging) or t(testing)");
+    return 0;
   }
 
-  SurfaceLearning surfaceLearning(n,frequency,fileName);
+  SurfaceLearning surfaceLearning(n,frequency,fileName,mode);
 
   if (!surfaceLearning.init()) 
   {
