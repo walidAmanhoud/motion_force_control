@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 2.8.3)
 project(motion_force_control)
 
 # Add support for c++11
-add_definitions(-std=c++11)
+add_definitions(-std=c++11 -O3)
 
 # Find required packages
 find_package(catkin REQUIRED COMPONENTS

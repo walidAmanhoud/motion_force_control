@@ -32,7 +32,7 @@ class SurfaceLearning
 {
 	public:
 
-		enum Mode {LOGGING = 0, TESTING = 1};
+		enum Mode {COLLECTING_DATA = 0, LEARNING = 1, TESTING = 2};
 
 	private:
 
@@ -91,6 +91,11 @@ class SurfaceLearning
 		Eigen::Vector3f _xAttractor;
 		float _lambda1;
 		float _Fd;
+		float _forceThreshold;
+
+		float _C;
+		float _sigma;
+		float _epsilonTube;
 
 
 		// Control variables
@@ -103,6 +108,8 @@ class SurfaceLearning
 		bool _firstWrenchReceived;
 		bool _wrenchBiasOK;
   	bool _stop;
+  	bool _processRawData;
+  	bool _useFullData;
 
     uint32_t _sequenceID;
 
@@ -122,12 +129,14 @@ class SurfaceLearning
 
 		Eigen::Vector3f _vdR;
 
+		std::vector<Eigen::Vector3f> surfaceData;
+
 
 
 	public:
 
 		// Class constructor
-		SurfaceLearning(ros::NodeHandle &n, double frequency, std::string fileName, Mode mode);
+		SurfaceLearning(ros::NodeHandle &n, double frequency, std::string fileName, Mode mode, float C, float sigma, float epsilonTube,bool processRawData, bool useFullData);
 
 		bool init();
 
@@ -148,8 +157,14 @@ class SurfaceLearning
 		void forceModulation();
 
 		void computeDesiredOrientation();
+
+		void learnSurfaceModel();
+
+		void generateSVMGradModelFile();
     
     void logData();
+
+    void processRawData();
 
     void publishData();
 

@@ -2,12 +2,17 @@
 
 SurfaceLearning* SurfaceLearning::me = NULL;
 
-SurfaceLearning::SurfaceLearning(ros::NodeHandle &n, double frequency, std::string fileName, Mode mode):
+SurfaceLearning::SurfaceLearning(ros::NodeHandle &n, double frequency, std::string fileName, Mode mode, float C, float sigma, float epsilonTube, bool processRawData, bool useFullData):
   _n(n),
   _loopRate(frequency),
   _dt(1.0f/frequency),
   _fileName(fileName),
-  _mode(mode)
+  _mode(mode),
+  _C(C),
+  _sigma(sigma),
+  _epsilonTube(epsilonTube),
+  _processRawData(processRawData),
+  _useFullData(useFullData)
 {
   me = this;
 
@@ -92,20 +97,26 @@ bool SurfaceLearning::init()
 
   signal(SIGINT,SurfaceLearning::stopNode);
 
-  if(!_n.getParamCached("/lwr/ds_param/damping_eigval0",_lambda1))
-  {
-    ROS_ERROR("Cannot read first eigen value of passive ds controller");
-    return false;
-  }
-
-
+  // if(!_n.getParamCached("/lwr/ds_param/damping_eigval0",_lambda1))
+  // {
+  //   ROS_ERROR("Cannot read first eigen value of passive ds controller");
+  //   return false;
+  // }
 
   ROS_INFO("Filename: %s", _fileName.c_str());
 
-
-  if(_mode == LOGGING)
+  if(_mode == COLLECTING_DATA)
   {
-    ROS_INFO("Mode: LOGGING");
+    ROS_INFO("Mode: COLLECTING_DATA");
+  }
+  else if(_mode == LEARNING)
+  {
+    ROS_INFO("Mode: LEARNING");
+    ROS_INFO("C: %f", _C);
+    ROS_INFO("Sigma: %f", _sigma);
+    ROS_INFO("Epsilon tube: %f", _epsilonTube);
+    ROS_INFO("Process raw data: %d", _processRawData);
+    ROS_INFO("Use full data: %d", _useFullData);
   }
   else if(_mode == TESTING)
   {
@@ -118,22 +129,36 @@ bool SurfaceLearning::init()
   }
 
 
-  if(_mode == LOGGING)
+  if(_mode == COLLECTING_DATA)
   {
-    _outputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data/"+_fileName+"_data.txt");
+    _outputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data/"+_fileName+"_raw_data.txt");
     if(!_outputFile.is_open())
     {
       ROS_ERROR("Cannot open data file");
       return false;
     } 
   }
+  else if(_mode == LEARNING)
+  {
+    _inputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data_surface/"+_fileName+"_libsvm_data.txt");
+    if(!_inputFile.is_open())
+    {
+      ROS_ERROR("Cannot open libsvm data file");
+      return false;
+    }
+    else
+    {
+      _inputFile.close();
+    }  
+  }
   else if(_mode == TESTING)
   {
-    std::string modelPath = ros::package::getPath(std::string("motion_force_control"))+"/data/"+_fileName+"_model.txt";
+
+    std::string modelPath = ros::package::getPath(std::string("motion_force_control"))+"/data_surface/"+_fileName+"_svmgrad_model.txt";
     _inputFile.open(modelPath);
     if(!_inputFile.is_open())
     {
-      ROS_ERROR("Cannot open svm file");
+      ROS_ERROR("Cannot svmgrad model model file");
       return false;
     }
     else
@@ -142,7 +167,6 @@ bool SurfaceLearning::init()
       _svm.loadModel(modelPath);
     }    
   }
-
 
   if (_n.ok()) 
   { 
@@ -163,29 +187,43 @@ void SurfaceLearning::run()
 {
   while (!_stop) 
   {
-
-    // std::cerr << (int) _firstRobotPose << " " << (int) _firstRobotTwist << " " << (int) _wrenchBiasOK << std::endl;
-    if(_firstRobotPose && _firstRobotTwist && _wrenchBiasOK)
+    if(_firstRobotPose && _firstRobotTwist /*&& _wrenchBiasOK*/)
     {
       _mutex.lock();
 
-      // Compute control command
-      computeCommand();
-
-      // Publish data to topics
-      publishData();
-
-      if(_mode == LOGGING)
+      switch(_mode)
       {
-        // Log data
-        logData();        
+        case COLLECTING_DATA:
+        {
+          computeCommand();
+          
+          // Log data
+          logData();        
+          break;
+        }
+        case TESTING:
+        {
+          computeCommand();
+          break;
+        }
+        default:
+        {
+          break;
+        }
       }
+
+     // Publish data to topics
+      publishData();
 
       _mutex.unlock();
     }
 
+    if(_mode == LEARNING)
+    {
+      me->_stop = true;
+    }
+    
     ros::spinOnce();
-
     _loopRate.sleep();
   }
 
@@ -198,9 +236,19 @@ void SurfaceLearning::run()
   ros::spinOnce();
   _loopRate.sleep();
 
-  if(_mode == LOGGING)
+  if(_mode == COLLECTING_DATA)
   {
     _outputFile.close();
+  }
+  
+  if(_mode == LEARNING)
+  {
+    if(_processRawData)
+    {
+      processRawData();
+    }
+
+    learnSurfaceModel();
   }
 
   ros::shutdown();
@@ -228,11 +276,11 @@ void SurfaceLearning::computeCommand()
     }
 
     // Check for update of passive ds controller eigen value
-    ros::param::getCached("/lwr/ds_param/damping_eigval0",_lambda1);
+    // ros::param::getCached("/lwr/ds_param/damping_eigval0",_lambda1);
 
-    computeOriginalDynamics();
-    rotatingDynamics();
-    forceModulation();
+    // computeOriginalDynamics();
+    // rotatingDynamics();
+    // forceModulation();
     // _vd = _vdR;
   }
 
@@ -286,7 +334,7 @@ void SurfaceLearning::computeDesiredOrientation()
     Eigen::Vector3f omegaTemp = _wRb*wq.segment(1,3);
     _omegad = omegaTemp;    
   }
-  else if(_mode == LOGGING)
+  else if(_mode == COLLECTING_DATA)
   {
     _qd = _q;
     _omegad.setConstant(0.0f); 
@@ -296,11 +344,10 @@ void SurfaceLearning::computeDesiredOrientation()
 
 void SurfaceLearning::computeOriginalDynamics()
 {
-
-    Eigen::Vector3f dir;
-    dir = _e1;
-    dir.normalize();
-    _vdOrig = 0.25f*dir;
+  Eigen::Vector3f dir;
+  dir = _e1;
+  dir.normalize();
+  _vdOrig = 0.25f*dir;
 }
 
 
@@ -443,6 +490,221 @@ void SurfaceLearning::forceModulation()
 }
 
 
+void SurfaceLearning::learnSurfaceModel()
+{
+  ROS_INFO("Learning surface model ...");
+  std::string command;
+  std::string dataFile = ros::package::getPath(std::string("motion_force_control"))+"/data_surface/"+_fileName+"_data.txt";
+  std::string modelFile = ros::package::getPath(std::string("motion_force_control"))+"/data_surface/"+_fileName+"_libsvm_model.txt";
+  float gamma = 1.0f/(2.0f*std::pow(_sigma,2.0f));
+  std::string svmCommand = "svm-train -s 3 -t 2 -c "+std::to_string(_C)+" -g "+std::to_string(gamma)+" -h 0 -p "+std::to_string(_epsilonTube);
+  command = svmCommand+" "+dataFile+" "+modelFile;
+  
+  int val = std::system(command.c_str());
+  ROS_INFO("libsvm command result: %d", val);
+
+  generateSVMGradModelFile();
+}
+
+void SurfaceLearning::generateSVMGradModelFile()
+{
+  ROS_INFO("Generate svm grad model file ...");
+  std::string command;
+  _inputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data_surface/"+_fileName+"_libsvm_model.txt");
+  if(!_inputFile.is_open())
+  {
+    ROS_ERROR("Cannot open libsvm model file");
+  }
+
+  std::string modelType, kernelType;
+  float gamma, rho;
+  int nbClasses, nbSVs;
+
+  std::string line;
+  std::getline(_inputFile,line);
+  modelType = line.substr(1,' ');
+  std::getline(_inputFile,line);
+  kernelType = line.substr(1,' ');
+  std::getline(_inputFile,line);
+  sscanf(line.c_str(),"gamma %f", &gamma);
+  std::getline(_inputFile,line);
+  sscanf(line.c_str(),"nr_class %d", &nbClasses);
+  std::getline(_inputFile,line);
+  sscanf(line.c_str(),"total_sv %d", &nbSVs);
+  std::getline(_inputFile,line);
+  sscanf(line.c_str(),"rho %f",&rho);
+  std::getline(_inputFile,line);
+
+
+  Eigen::Matrix<float,Eigen::Dynamic,3> sv;
+  Eigen::VectorXf alpha;
+
+  if(line =="SV")
+  {
+    sv.resize(nbSVs,3);
+    alpha.resize(nbSVs);
+    
+    for(int k = 0; k < nbSVs; k++)
+    {
+      std::getline(_inputFile,line);
+      sscanf(line.c_str(),"%f 1:%f 2:%f 3:%f", &alpha(k),&sv(k,0),&sv(k,1),&sv(k,2));
+    }
+  }
+  ROS_INFO("svm_type %s", modelType.c_str());
+  ROS_INFO("kernel_type %s", kernelType.c_str());
+  ROS_INFO("gamma %f", gamma);
+  ROS_INFO("nr_class %d", nbClasses);
+  ROS_INFO("total_sv %d", nbSVs);
+  ROS_INFO("rho %f",rho);
+
+
+  _inputFile.close();
+
+
+  _outputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data_surface/"+_fileName+"_svmgrad_model.txt");
+  if(!_outputFile.is_open())
+  {
+    ROS_ERROR("Cannot open svnm grad model file");
+  }
+  else
+  {
+    _outputFile << sv.cols() << std::endl
+                << nbSVs << std::endl
+                << -rho << std::endl
+                << 1.0f/std::sqrt(2*gamma) << std::endl << std::endl
+                << alpha.transpose() << std::endl << std::endl
+                << sv.col(0).transpose() << std::endl
+                << sv.col(1).transpose() << std::endl
+                << sv.col(2).transpose() << std::endl;
+
+    _outputFile.close();
+  }
+
+
+}
+
+
+void SurfaceLearning::processRawData()
+{
+    _inputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data_surface/"+_fileName+"_raw_data.txt");
+    
+    if(!_inputFile.is_open())
+    {
+      ROS_ERROR("Cannot open raw data file");
+    }
+
+    std::string line;
+    double timeTemp;
+    Eigen::Vector3f position,velocity,force;
+    uint32_t sequenceID;
+
+    std::vector<Eigen::Vector3f> surfaceData;
+    while(std::getline(_inputFile,line))  
+    {
+      std::stringstream ss;
+      ss << line;
+      ss >> timeTemp >> position(0) >> position(1) >> position(2) >> 
+                        velocity(0) >> velocity(1) >> velocity(2) >>
+                        force(0) >> force(1) >> force(2) >> sequenceID;
+
+      if(force.norm()>3.0f)
+      {
+        surfaceData.push_back(position);
+      }
+    }
+
+    std::cerr << surfaceData.size() << std::endl;
+
+    Eigen::Matrix<float,Eigen::Dynamic,3, Eigen::RowMajor> Xs;
+    Xs.resize(surfaceData.size(),3);
+    memcpy(Xs.data(),surfaceData.data(),surfaceData.size()*sizeof(Eigen::Vector3f));
+
+    Eigen::Vector3f XsMin, XsMax;
+
+    for(int k = 0; k< 3; k++)
+    {
+      XsMin(k) = Xs.col(k).array().minCoeff();
+      XsMax(k) = Xs.col(k).array().maxCoeff();
+    }
+
+    srand(time(NULL));
+    Eigen::Matrix<float,Eigen::Dynamic,3> R;
+    R.resize(20000,3);
+    R.setRandom();
+    R.array()+= 1.0f;
+    R.array()/=2.0f;
+
+    Eigen::MatrixXf X;
+    X.resize(R.rows(),R.cols());
+
+    float offset = 0.3f;
+
+    for(int k = 0; k< 3; k++)
+    {
+      if(k == 2)
+      {
+        X.col(k).array() = XsMin(k)+(XsMax(k)+offset-XsMin(k))*R.col(k).array();
+      }
+      else
+      {
+        X.col(k).array() = XsMin(k)+(XsMax(k)-XsMin(k))*R.col(k).array();
+      }
+    }
+
+    Eigen::Matrix<float,Eigen::Dynamic,1> temp, XLabel, XLabelIndex;
+    XLabel.resize(X.rows(),1);
+    XLabelIndex.resize(X.rows());
+
+    Eigen::VectorXf::Index index;
+    for(uint32_t k = 0; k < X.rows(); k++)
+    {
+      XLabel(k) = (X.row(k).replicate(Xs.rows(),1)-Xs).rowwise().norm().array().minCoeff(&index);
+      XLabelIndex(k) = index; 
+      if(X(k,2)-Xs(index,2)<0.0f)
+      {
+        XLabel(k) = -XLabel(k);
+      }
+    }
+
+    _inputFile.close();
+
+    Eigen::MatrixXf XFull;
+    XFull.resize(X.rows()+Xs.rows(),X.cols());
+    XFull << X,Xs;
+
+    Eigen::VectorXf XFullLabel;
+    XFullLabel.resize(X.rows()+Xs.rows());
+    XFullLabel.setConstant(0.0f);
+    XFullLabel.segment(0,X.rows()) = XLabel;
+
+    _outputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data_surface/"+_fileName+"_libsvm_data.txt");
+
+
+    if(!_outputFile.is_open())
+    {
+      ROS_ERROR("Cannot open libsvm data file");
+    }
+
+    if(_useFullData)
+    {
+      for(uint32_t k = 0; k < XFull.rows(); k++)
+      {
+        _outputFile << XFullLabel(k) << " 1:" << XFull(k,0) << " 2:" << XFull(k,1) << " 3:" << XFull(k,2) << std::endl;
+      }
+    }
+    else
+    {
+      for(uint32_t k = 0; k < X.rows(); k++)
+      {
+        _outputFile << XLabel(k) << " 1:" << X(k,0) << " 2:" << X(k,1) << " 3:" << X(k,2) << std::endl;
+      }
+    }
+
+
+    _outputFile.close();
+
+}
+
 void SurfaceLearning::logData()
 {
     _outputFile << ros::Time::now() << " "
@@ -451,7 +713,6 @@ void SurfaceLearning::logData()
                 << _filteredWrench.segment(0,3).transpose() << " "
                 << _sequenceID << std::endl;
 }
-
 
 void SurfaceLearning::publishData()
 {
@@ -518,7 +779,7 @@ void SurfaceLearning::updateRobotPose(const geometry_msgs::Pose::ConstPtr& msg)
   if((_x-temp).norm()>FLT_EPSILON)
   {
     _sequenceID++;
-    if(_mode == LOGGING)
+    if(_mode == COLLECTING_DATA)
     {
       std::cerr << _sequenceID << std::endl;
     }
