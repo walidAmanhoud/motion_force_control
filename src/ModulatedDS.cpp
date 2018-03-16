@@ -2,14 +2,14 @@
 
 ModulatedDS* ModulatedDS::me = NULL;
 
-ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileName, bool useOptitrack, 
+ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileName, SurfaceType surfaceType, 
                          OriginalDynamics originalDynamics, ModulationType modulationType,
                          Formulation formulation, Constraint constraint, float targetVelocity, float targetForce):
   _n(n),
   _loopRate(frequency),
   _dt(1.0f/frequency),
   _fileName(fileName),
-  _useOptitrack(useOptitrack),
+  _surfaceType(surfaceType),
   _originalDynamics(originalDynamics),
   _modulationType(modulationType),
   _formulation(formulation),
@@ -58,20 +58,11 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
   _normalDistance = 0.0f;
   _normalForce = 0.0f;
 
-  if(_useOptitrack)
-  {
-    _firstOptitrackRobotPose = false;
-    _firstOptitrackP1Pose = false;
-    _firstOptitrackP2Pose = false;
-    _firstOptitrackP3Pose = false;
-  }
-  else
-  {
-    _firstOptitrackRobotPose = true;
-    _firstOptitrackP1Pose = true;
-    _firstOptitrackP2Pose = true;
-    _firstOptitrackP3Pose = true;  
-  }
+  _firstOptitrackRobotPose = false;
+  _firstOptitrackP1Pose = false;
+  _firstOptitrackP2Pose = false;
+  _firstOptitrackP3Pose = false;
+
 
   _lambda1 = 0.0f;
 
@@ -174,7 +165,7 @@ bool ModulatedDS::init()
 
   ROS_INFO("Filename: %s", _fileName.c_str());
 
-  _outputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data/"+_fileName+".txt");
+  _outputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data_modulation/"+_fileName+".txt");
 
 
   if(!_n.getParamCached("/lwr/ds_param/damping_eigval0",_lambda1))
@@ -190,7 +181,43 @@ bool ModulatedDS::init()
     return false;
   }
 
-  ROS_INFO("Use optitrack: %d", (int) _useOptitrack);
+  if(_surfaceType == PLANE)
+  {
+    ROS_INFO("Surface type: PLANE");
+    _firstOptitrackRobotPose = true;
+    _firstOptitrackP1Pose = true;
+    _firstOptitrackP2Pose = true;
+    _firstOptitrackP3Pose = true;  
+  }
+  else if(_surfaceType == PLANE_OPTITRACK)
+  {
+    ROS_INFO("Surface type: PLANE_OPTITRACK");
+  }
+  else if(_surfaceType == LEARNED_SURFACE)
+  {
+    ROS_INFO("Surface type: LEANRED_SURFACE");
+    _firstOptitrackRobotPose = true;
+    _firstOptitrackP1Pose = true;
+    _firstOptitrackP2Pose = true;
+    _firstOptitrackP3Pose = true;  
+     std::string modelPath = ros::package::getPath(std::string("motion_force_control"))+"/data_surface/learned_surface_svmgrad_model.txt";
+     _inputFile.open(modelPath);
+     if(!_inputFile.is_open())
+     {
+        ROS_ERROR("Cannot open model file");
+        return false;
+     }
+     else
+     {
+        _inputFile.close();
+        _svm.loadModel(modelPath);
+     }
+  }
+  else
+  {
+    ROS_ERROR("Surface type not recognized");
+    return false;
+  }
 
   if(_originalDynamics == CONSTANT)
   {
@@ -361,6 +388,7 @@ void ModulatedDS::computeCommand()
       rotatingDynamics();
 
       forceModulation();
+      
       break;
     }
     default:
@@ -377,38 +405,60 @@ void ModulatedDS::computeCommand()
 
 void ModulatedDS::computeProjectionOnSurface()
 {
-  if(_useOptitrack)
-  {
-    // Compute plane normal form markers position
-    _p1 = _plane1Position-_robotBasisPosition;
-    _p2 = _plane2Position-_robotBasisPosition;
-    _p3 = _plane3Position-_robotBasisPosition;
-    Eigen::Vector3f p13,p12;
-    p13 = _p3-_p1;
-    p12 = _p2-_p1;
-    p13 /= p13.norm();
-    p12 /= p12.norm();
-    _planeNormal = p13.cross(p12);
-    _planeNormal /= _planeNormal.norm();
-  }
 
-  // Compute vertical projection on surface
-  _xProj = _x;
-
-  if(_useOptitrack)
+  switch(_surfaceType)
   {
-    _xProj(2) = (-_planeNormal(0)*(_xProj(0)-_p3(0))-_planeNormal(1)*(_xProj(1)-_p3(1))+_planeNormal(2)*_p3(2))/_planeNormal(2);
-  }
-  else
-  {
-    _xProj(2) = (-_planeNormal(0)*(_xProj(0)-_p(0))-_planeNormal(1)*(_xProj(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
-  }
+    case PLANE:
+    {
+      _xProj(2) = (-_planeNormal(0)*(_xProj(0)-_p(0))-_planeNormal(1)*(_xProj(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
 
-  // Compute _e1 = normal vector pointing towards the surface
-  _e1 = -_planeNormal;
+      // Compute _e1 = normal vector pointing towards the surface
+      _e1 = -_planeNormal;
+      
+      // Compute signed normal distance to the plane
+      _normalDistance = (_xProj-_x).dot(_e1);
+      break;
+    }
+    case PLANE_OPTITRACK:
+    {
+      _p1 = _plane1Position-_robotBasisPosition;
+      _p2 = _plane2Position-_robotBasisPosition;
+      _p3 = _plane3Position-_robotBasisPosition;
+      Eigen::Vector3f p13,p12;
+      p13 = _p3-_p1;
+      p12 = _p2-_p1;
+      p13 /= p13.norm();
+      p12 /= p12.norm();
+      _planeNormal = p13.cross(p12);
+      _planeNormal /= _planeNormal.norm();
   
-  // Compute signed normal distance to the plane
-  _normalDistance = (_xProj-_x).dot(_e1);
+      _xProj = _x;
+      _xProj(2) = (-_planeNormal(0)*(_xProj(0)-_p3(0))-_planeNormal(1)*(_xProj(1)-_p3(1))+_planeNormal(2)*_p3(2))/_planeNormal(2);
+      
+      // Compute _e1 = normal vector pointing towards the surface
+      _e1 = -_planeNormal;
+      
+      // Compute signed normal distance to the plane
+      _normalDistance = (_xProj-_x).dot(_e1);
+      break;
+    }
+    case LEARNED_SURFACE:
+    {
+      _svm.preComputeKernel(true);
+      _normalDistance = _svm.calculateGamma(_x.cast<double>());
+      _planeNormal = _svm.calculateGammaDerivative(_x.cast<double>()).cast<float>();
+      _planeNormal.normalize();
+      _e1 = -_planeNormal;
+       std::cerr << _normalDistance << " " << _e1.transpose() << std::endl;    
+
+      break;
+    }
+    default:
+    {
+      break;
+    }
+  }
+
 
   if(_normalDistance < 0.0f)
   {
@@ -418,6 +468,47 @@ void ModulatedDS::computeProjectionOnSurface()
   // Compute normal force
   Eigen::Vector3f F = _filteredWrench.segment(0,3);
   _normalForce = _e1.dot(-_wRb*F);
+  // if(_useOptitrack)
+  // {
+  //   // Compute plane normal form markers position
+  //   _p1 = _plane1Position-_robotBasisPosition;
+  //   _p2 = _plane2Position-_robotBasisPosition;
+  //   _p3 = _plane3Position-_robotBasisPosition;
+  //   Eigen::Vector3f p13,p12;
+  //   p13 = _p3-_p1;
+  //   p12 = _p2-_p1;
+  //   p13 /= p13.norm();
+  //   p12 /= p12.norm();
+  //   _planeNormal = p13.cross(p12);
+  //   _planeNormal /= _planeNormal.norm();
+  // }
+
+  // // Compute vertical projection on surface
+  // _xProj = _x;
+
+  // if(_useOptitrack)
+  // {
+  //   _xProj(2) = (-_planeNormal(0)*(_xProj(0)-_p3(0))-_planeNormal(1)*(_xProj(1)-_p3(1))+_planeNormal(2)*_p3(2))/_planeNormal(2);
+  // }
+  // else
+  // {
+  //   _xProj(2) = (-_planeNormal(0)*(_xProj(0)-_p(0))-_planeNormal(1)*(_xProj(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
+  // }
+
+  // // Compute _e1 = normal vector pointing towards the surface
+  // _e1 = -_planeNormal;
+  
+  // // Compute signed normal distance to the plane
+  // _normalDistance = (_xProj-_x).dot(_e1);
+
+  // if(_normalDistance < 0.0f)
+  // {
+  //   _normalDistance = 0.0f;
+  // }
+
+  // // Compute normal force
+  // Eigen::Vector3f F = _filteredWrench.segment(0,3);
+  // _normalForce = _e1.dot(-_wRb*F);
 
 }
 
@@ -425,12 +516,12 @@ void ModulatedDS::computeProjectionOnSurface()
 void ModulatedDS::computeOriginalDynamics()
 {
   // Compute fixed attractor on plane
-  if(_useOptitrack)
+  if(_surfaceType == PLANE_OPTITRACK)
   {
     _xAttractor = _p1+0.7f*(_p2-_p1)+0.5f*(_p3-_p1);
     _xAttractor(2) = (-_planeNormal(0)*(_xAttractor(0)-_p1(0))-_planeNormal(1)*(_xAttractor(1)-_p1(1))+_planeNormal(2)*_p1(2))/_planeNormal(2);
   }
-  else
+  else if(_surfaceType == PLANE || _surfaceType == LEARNED_SURFACE)
   {
     _xAttractor = _taskAttractor;
     _xAttractor(2) = (-_planeNormal(0)*(_xAttractor(0)-_p(0))-_planeNormal(1)*(_xAttractor(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
@@ -780,7 +871,7 @@ void ModulatedDS::publishData()
   _msgMarker.header.frame_id = "world";
   _msgMarker.header.stamp = ros::Time();
   Eigen::Vector3f center, u,v,n;
-  if(_useOptitrack)
+  if(_surfaceType == PLANE_OPTITRACK)
   {
     center = _p1+0.5f*(_p2-_p1)+0.5f*(_p3-_p1); 
     u = _p3-_p1;

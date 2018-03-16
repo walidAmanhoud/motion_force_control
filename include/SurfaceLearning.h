@@ -148,14 +148,6 @@ class SurfaceLearning
 		
     void computeCommand();
 
-		void computeOriginalDynamics();
-
-		Eigen::Vector3f getCyclingMotionVelocity(Eigen::Vector3f position, Eigen::Vector3f attractor);
-
-		void rotatingDynamics();
-
-		void forceModulation();
-
 		void computeDesiredOrientation();
 
 		void learnSurfaceModel();

@@ -8,6 +8,7 @@ int main(int argc, char **argv)
   float frequency = 500.0f;
   
   std::string fileName;
+  ModulatedDS::SurfaceType surfaceType;  
   ModulatedDS::OriginalDynamics originalDynamics;
   ModulatedDS::ModulationType modulationType;
   ModulatedDS::Formulation formulation;
@@ -24,17 +25,21 @@ int main(int argc, char **argv)
   {
     fileName = std::string(argv[1]);
 
-    if(std::string(argv[2]) == "-u" && std::string(argv[3]) == "y")
+    if(std::string(argv[2]) == "-s" && std::string(argv[3]) == "p")
     {
-      useOptitrack = true;
+      surfaceType = ModulatedDS::SurfaceType::PLANE;
     }
-    else if(std::string(argv[2]) == "-u" && std::string(argv[3]) == "n")
+    else if(std::string(argv[2]) == "-s" && std::string(argv[3]) == "po")
     {
-      useOptitrack = false;
+      surfaceType = ModulatedDS::SurfaceType::PLANE_OPTITRACK;
+    }
+    else if(std::string(argv[2]) == "-s" && std::string(argv[3]) == "ls")
+    {
+      surfaceType = ModulatedDS::SurfaceType::LEARNED_SURFACE;
     }
     else
     {
-      ROS_ERROR("Wrong opitrack arguments, the command line arguments should be: fileName -u(use optitrack) y(yes) or n(no) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
+      ROS_ERROR("Wrong surface type arguments, the command line arguments should be: fileName -s(surface type) p(plane) or po(plane optitrack) or ls(learned surface) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
       return 0;
     }
 
@@ -48,7 +53,7 @@ int main(int argc, char **argv)
     }
     else
     {
-      ROS_ERROR("Wrong original dynamics arguments, the command line arguments should be: fileName -u(use optitrack) y(yes) or n(no) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
+      ROS_ERROR("Wrong original dynamics arguments, the command line arguments should be: fileName -s(surface type) p(plane) or po(plane optitrack) or ls(learned surface) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
       return 0;
     }
 
@@ -62,7 +67,7 @@ int main(int argc, char **argv)
     }
     else
     {
-      ROS_ERROR("Wrong modulation type arguments, the command line arguments should be: fileName -u(use optitrack) y(yes) or n(no) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
+      ROS_ERROR("Wrong modulation type arguments, the command line arguments should be: fileName -s(surface type) p(plane) or po(plane optitrack) or ls(learned surface) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
       return 0;
     }
     
@@ -78,17 +83,21 @@ int main(int argc, char **argv)
   {
     fileName = std::string(argv[1]);
 
-    if(std::string(argv[2]) == "-u" && std::string(argv[3]) == "y")
+    if(std::string(argv[2]) == "-s" && std::string(argv[3]) == "p")
     {
-      useOptitrack = true;
+      surfaceType = ModulatedDS::SurfaceType::PLANE;
     }
-    else if(std::string(argv[2]) == "-u" && std::string(argv[3]) == "n")
+    else if(std::string(argv[2]) == "-s" && std::string(argv[3]) == "po")
     {
-      useOptitrack = false;
+      surfaceType = ModulatedDS::SurfaceType::PLANE_OPTITRACK;
+    }
+    else if(std::string(argv[2]) == "-s" && std::string(argv[3]) == "ls")
+    {
+      surfaceType = ModulatedDS::SurfaceType::LEARNED_SURFACE;
     }
     else
     {
-      ROS_ERROR("Wrong opitrack arguments, the command line arguments should be: fileName -u(use optitrack) y(yes) or n(no) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
+      ROS_ERROR("Wrong surface type arguments, the command line arguments should be: fileName -s(surface type) p(plane) or po(plane optitrack) or ls(learned surface) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
       return 0;
     }
 
@@ -102,7 +111,7 @@ int main(int argc, char **argv)
     }
     else
     {
-      ROS_ERROR("Wrong original dynamics arguments, the command line arguments should be: fileName -u(use optitrack) y(yes) or n(no) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
+      ROS_ERROR("Wrong original dynamics arguments, the command line arguments should be: fileName -s(surface type) p(plane) or po(plane optitrack) or ls(learned surface) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
       return 0;
     }
 
@@ -116,7 +125,7 @@ int main(int argc, char **argv)
     }
     else
     {
-      ROS_ERROR("Wrong modulation type arguments, the command line arguments should be: fileName -u(use optitrack) y(yes) or n(no) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
+      ROS_ERROR("Wrong modulation type arguments, the command line arguments should be: fileName -s(surface type) p(plane) or po(plane optitrack) or ls(learned surface) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
       return 0;
     }
 
@@ -134,7 +143,7 @@ int main(int argc, char **argv)
     }
     else
     {
-      ROS_ERROR("Wrong formulation arguments, the command line arguments should be: fileName -u(use optitrack) y(yes) or n(no) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm)");
+      ROS_ERROR("Wrong formulation arguments, the command line arguments should be: fileName -s(surface type) p(plane) or po(plane optitrack) or ls(learned surface) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm)");
       return 0;
     }
 
@@ -148,7 +157,7 @@ int main(int argc, char **argv)
     }
     else
     {
-      ROS_ERROR("Wrong constraint arguments, the command line arguments should be: fileName -u(use optitrack) y(yes) or n(no) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
+      ROS_ERROR("Wrong constraint arguments, the command line arguments should be: fileName -s(surface type) p(plane) or po(plane optitrack) or ls(learned surface) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
       return 0;
     }
 
@@ -158,7 +167,7 @@ int main(int argc, char **argv)
     }
     else
     {
-      ROS_ERROR("Wrong target velocity arguments, the command line arguments should be: fileName -u(use optitrack) y(yes) or n(no) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
+      ROS_ERROR("Wrong target velocity arguments, the command line arguments should be: fileName -s(surface type) p(plane) or po(plane optitrack) or ls(learned surface) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
       return 0;
     }  
 
@@ -168,7 +177,7 @@ int main(int argc, char **argv)
     }
     else
     {
-      ROS_ERROR("Wrong target force arguments, the command line arguments should be: fileName -u(use optitrack) y(yes) or n(no) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
+      ROS_ERROR("Wrong target force arguments, the command line arguments should be: fileName -s(surface type) p(plane) or po(plane optitrack) or ls(learned surface) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
       return 0;
     } 
 
@@ -177,12 +186,12 @@ int main(int argc, char **argv)
   }
   else
   {
-    ROS_ERROR("You are missing arguments: the command line arguments should be: fileName -u(use optitrack) y(yes) or n(no) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
+    ROS_ERROR("You are missing arguments: the command line arguments should be: fileName -s(surface type) p(plane) or po(plane optitrack) or ls(learned surface) -o(original dynamics) c(constant) or a(arbitrary) -m(modulation type) r(rotation) or rf(rotation and force) -f(formulation) f1 or f2 or f3 -c(constraint) v (velocity norm) or a (apparent velocity norm) -v(target velocity) value -f(target force) value");
     return 0;
   }
 
 
-  ModulatedDS modulatedDS(n,frequency,fileName,useOptitrack,originalDynamics,modulationType,formulation,constraint,targetVelocity,targetForce);
+  ModulatedDS modulatedDS(n,frequency,fileName,surfaceType,originalDynamics,modulationType,formulation,constraint,targetVelocity,targetForce);
 
   if (!modulatedDS.init()) 
   {

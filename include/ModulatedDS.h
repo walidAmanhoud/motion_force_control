@@ -25,6 +25,7 @@
 #include "geometry_msgs/WrenchStamped.h"
 #include "geometry_msgs/Wrench.h"
 #include "geometry_msgs/Twist.h"
+#include "svm_grad.h"
 
 #define NB_SAMPLES 50
 
@@ -33,6 +34,7 @@ class ModulatedDS
 
 	public:
 
+		enum SurfaceType {PLANE = 0, PLANE_OPTITRACK = 1, LEARNED_SURFACE = 2};
 		enum OriginalDynamics {CONSTANT = 0, ARBITRARY = 1};
 		enum ModulationType	{ROTATION = 0, ROTATION_AND_FORCE = 1};
 		enum Formulation {F1 = 0, F2 = 1, F3 = 2};
@@ -130,7 +132,6 @@ class ModulatedDS
 		bool _firstOptitrackP3Pose;
 		bool _wrenchBiasOK;
   	bool _stop;
-		bool _useOptitrack;
 
     // Optitrack variables
 		Eigen::Vector3f _robotBasisPosition;
@@ -146,6 +147,7 @@ class ModulatedDS
 		float _lambda1;
 
 		// Other variables
+		SurfaceType _surfaceType;
 		OriginalDynamics _originalDynamics;
 		ModulationType _modulationType;
 		Formulation _formulation;
@@ -159,12 +161,14 @@ class ModulatedDS
 		dynamic_reconfigure::Server<motion_force_control::modulatedDS_paramsConfig> _dynRecServer;
 		dynamic_reconfigure::Server<motion_force_control::modulatedDS_paramsConfig>::CallbackType _dynRecCallback;
 
+		std::ifstream _inputFile;
 		std::ofstream _outputFile;
+		SVMGrad _svm;
 
 	public:
 
 		// Class constructor
-		ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileName, bool useOptitrack, 
+		ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileName, SurfaceType surfaceType, 
 			          OriginalDynamics originalDynamics, ModulationType modulationType,
 			          Formulation formulation, Constraint constraint, float targetVelocity, float targetForce);
 

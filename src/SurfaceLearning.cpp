@@ -36,7 +36,7 @@ SurfaceLearning::SurfaceLearning(ros::NodeHandle &n, double frequency, std::stri
   _omegad.setConstant(0.0f);
   _qd.setConstant(0.0f);
   _e1 << 0.0f, 0.0f, 1.0f;
-  _xAttractor << -0.55f,0.05f,0.2f;
+  _xAttractor << -0.60f,0.0f,0.2f;
 
   _Fd = 0.0f;
 
@@ -97,12 +97,6 @@ bool SurfaceLearning::init()
 
   signal(SIGINT,SurfaceLearning::stopNode);
 
-  // if(!_n.getParamCached("/lwr/ds_param/damping_eigval0",_lambda1))
-  // {
-  //   ROS_ERROR("Cannot read first eigen value of passive ds controller");
-  //   return false;
-  // }
-
   ROS_INFO("Filename: %s", _fileName.c_str());
 
   if(_mode == COLLECTING_DATA)
@@ -131,7 +125,7 @@ bool SurfaceLearning::init()
 
   if(_mode == COLLECTING_DATA)
   {
-    _outputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data/"+_fileName+"_raw_data.txt");
+    _outputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data_surface/"+_fileName+"_raw_data.txt");
     if(!_outputFile.is_open())
     {
       ROS_ERROR("Cannot open data file");
@@ -140,16 +134,16 @@ bool SurfaceLearning::init()
   }
   else if(_mode == LEARNING)
   {
-    _inputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data_surface/"+_fileName+"_libsvm_data.txt");
-    if(!_inputFile.is_open())
-    {
-      ROS_ERROR("Cannot open libsvm data file");
-      return false;
-    }
-    else
-    {
-      _inputFile.close();
-    }  
+    // _inputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data_surface/"+_fileName+"_libsvm_data.txt");
+    // if(!_inputFile.is_open())
+    // {
+    //   ROS_ERROR("Cannot open libsvm data file");
+    //   return false;
+    // }
+    // else
+    // {
+    //   _inputFile.close();
+    // }  
   }
   else if(_mode == TESTING)
   {
@@ -187,7 +181,7 @@ void SurfaceLearning::run()
 {
   while (!_stop) 
   {
-    if(_firstRobotPose && _firstRobotTwist /*&& _wrenchBiasOK*/)
+    if(_firstRobotPose && _firstRobotTwist && _wrenchBiasOK)
     {
       _mutex.lock();
 
@@ -274,14 +268,6 @@ void SurfaceLearning::computeCommand()
     {
       _normalDistance = 0.0f;
     }
-
-    // Check for update of passive ds controller eigen value
-    // ros::param::getCached("/lwr/ds_param/damping_eigval0",_lambda1);
-
-    // computeOriginalDynamics();
-    // rotatingDynamics();
-    // forceModulation();
-    // _vd = _vdR;
   }
 
   computeDesiredOrientation();
@@ -342,164 +328,17 @@ void SurfaceLearning::computeDesiredOrientation()
 
 }
 
-void SurfaceLearning::computeOriginalDynamics()
-{
-  Eigen::Vector3f dir;
-  dir = _e1;
-  dir.normalize();
-  _vdOrig = 0.25f*dir;
-}
-
-
-Eigen::Vector3f SurfaceLearning::getCyclingMotionVelocity(Eigen::Vector3f position, Eigen::Vector3f attractor)
-{
-  Eigen::Vector3f velocity;
-
-  position = position-attractor;
-
-  velocity(2) = -position(2);
-
-  float R = sqrt(position(0) * position(0) + position(1) * position(1));
-  float T = atan2(position(1), position(0));
-
-  float r = 0.05f;
-  float omega = M_PI;
-
-  velocity(0) = -(R-r) * cos(T) - R * omega * sin(T);
-  velocity(1) = -(R-r) * sin(T) + R * omega * cos(T);
-
-  return velocity;
-}
-
-
-void SurfaceLearning::rotatingDynamics()
-{
-    Eigen::Vector3f vdContact;
-    vdContact = (Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*getCyclingMotionVelocity(_x,_xAttractor);
-    vdContact.normalize();
-
-    // Compute rotation angle
-    float angle = std::acos(_vdOrig.normalized().dot(vdContact));
-    float theta = (1.0f-std::tanh(10*_normalDistance))*angle;
-
-    // Compute rotation direction
-    Eigen::Vector3f u = (_vdOrig.normalized()).cross(vdContact);
-    Eigen::Matrix3f K,R;
-
-    if(u.norm() < FLT_EPSILON)
-    {
-      R.setIdentity();
-    }
-    else
-    {
-      u/=u.norm();
-      K = getSkewSymmetricMatrix(u);
-      R = Eigen::Matrix3f::Identity()+std::sin(theta)*K+(1.0f-std::cos(theta))*K*K;
-    }
-    _vdR = R*_vdOrig;
-}
-
-void SurfaceLearning::forceModulation()
-{
-  // Extract linear speed, force and torque data
-
-  // Compute modulation matrix used to apply a force Fd when the surface is reached while keeping the norm of the velocity constant 
-  // M(x) = B(x)L(x)B(x)
-  // B(x) = [e1 e2 e3] with e1 = -n is an orthognal basis defining the modulation frame
-  //        [la lb lb] 
-  // L(x) = [0  lc 0 ] is the matrix defining the modulation gains to apply on the frame
-  //        [0  0  lc]
-
-  // Compute modulation frame B(x)
-  Eigen::Vector3f xDir;
-  xDir << 1.0f,0.0f,0.0f;
-  Eigen::Matrix3f B;
-  _e2 = (Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*xDir;
-  _e2.normalize();
-  _e3 = _e1.cross(_e2);
-  _e3.normalize();
-  B.col(0) = _e1;
-  B.col(1) = _e2;
-  B.col(2) = _e3;
-
-  // Compute force profile
-  if(_lambda1<1.0f)
-  {
-    _lambda1 = 1.0f;
-  }
-
-  _Fd = 10.0f*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;
-
-  // Compute diagonal gain matrix L(x)
-  Eigen::Matrix3f L = Eigen::Matrix3f::Zero();
-  float la, lb, lc;
-
-  float temp, delta;
-
-  temp = (_e1+_e2+_e3).dot(_vdR);
-  if(fabs(temp)<FLT_EPSILON)
-  {
-    lb = 0.0f;
-  }
-  else
-  {
-    lb = _Fd/temp;
-  }
-
-  // if(_constraint == VELOCITY_NORM)
-  // {
-    // delta = std::pow(2.0f*_e1.dot(_vdR)*lb*temp,2.0f)-4.0f*std::pow(_vdOrig.norm(),2.0f)*(std::pow(lb*temp,2.0f)-std::pow(_vdOrig.norm(),2.0f));
-  // }
-  // else if(_constraint == APPARENT_VELOCITY_NORM)
-  // {
-    delta = std::pow(2.0f*_e1.dot(_vdR)*lb*temp,2.0f)+4.0f*std::pow(_vdOrig.norm(),4.0f); 
-  // }
-
-  if(delta < 0.0f)
-  {
-    delta = 0.0f;
-  }
-  la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdOrig.norm(),2.0f));
-
-  L(0,0) = la+lb;
-  L(0,1) = lb;
-  L(0,2) = lb;
-  L(1,1) = la;
-  L(2,2) = la;
-
-  // Compute modulation matrix
-  Eigen::Matrix3f M;
-  M = B*L*B.transpose();
-
-  // Apply force modulation to the rotating dynamics
-
-  _vd = M*_vdR;
-
-  std::cerr << "delta: " << delta << " la: " << la << " lb: " << lb << " vd: " << _vd.norm() << std::endl;
-
-
-  // Bound desired velocity  
-  if(_vd.norm()>0.4f)
-  {
-    _vd *= 0.4f/_vd.norm();
-  }
-
-  _Fc.setConstant(0.0f);
-
-  std::cerr << "vd after scaling: " << _vd.norm() << " distance: " << _normalDistance << std::endl;
-}
-
-
 void SurfaceLearning::learnSurfaceModel()
 {
   ROS_INFO("Learning surface model ...");
   std::string command;
-  std::string dataFile = ros::package::getPath(std::string("motion_force_control"))+"/data_surface/"+_fileName+"_data.txt";
+  std::string dataFile = ros::package::getPath(std::string("motion_force_control"))+"/data_surface/"+_fileName+"_libsvm_data.txt";
   std::string modelFile = ros::package::getPath(std::string("motion_force_control"))+"/data_surface/"+_fileName+"_libsvm_model.txt";
   float gamma = 1.0f/(2.0f*std::pow(_sigma,2.0f));
+  std::cerr << gamma << std::endl;
   std::string svmCommand = "svm-train -s 3 -t 2 -c "+std::to_string(_C)+" -g "+std::to_string(gamma)+" -h 0 -p "+std::to_string(_epsilonTube);
   command = svmCommand+" "+dataFile+" "+modelFile;
-  
+  std::cerr << command << std::endl;
   int val = std::system(command.c_str());
   ROS_INFO("libsvm command result: %d", val);
 
@@ -779,7 +618,7 @@ void SurfaceLearning::updateRobotPose(const geometry_msgs::Pose::ConstPtr& msg)
   if((_x-temp).norm()>FLT_EPSILON)
   {
     _sequenceID++;
-    if(_mode == COLLECTING_DATA)
+    if(_mode == COLLECTING_DATA && _wrenchBiasOK)
     {
       std::cerr << _sequenceID << std::endl;
     }

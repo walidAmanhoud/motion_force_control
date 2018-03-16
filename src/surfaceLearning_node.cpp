@@ -90,7 +90,7 @@ int main(int argc, char **argv)
     else if(std::string(argv[2]) == "-m" && std::string(argv[3]) == "l" && argc != 10)
     {
 
-        ROS_ERROR("Wrong learning mode arguments, the command line arguments should be: fileName -m(mode) l(logging) or t(testing) -c(C) C -s(sigma) s -e(epsilon tube) e");
+        ROS_ERROR("Wrong process learning mode arguments, the command line arguments should be: fileName -m(mode) l(logging) or t(testing) -c(C) C -s(sigma) s -e(epsilon tube) e -p(process raw data) y(yes) or n(no) -u(use full data) y(yes) or n(no)");
         return 0;  
     }
     else if(std::string(argv[2]) == "-m" && std::string(argv[3]) == "t")
