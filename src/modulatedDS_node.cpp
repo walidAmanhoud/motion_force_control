@@ -5,7 +5,7 @@ int main(int argc, char **argv)
 {
   ros::init(argc, argv, "modulatedDS");
   ros::NodeHandle n;
-  float frequency = 500.0f;
+  float frequency = 200.0f;
   
   std::string fileName;
   ModulatedDS::SurfaceType surfaceType;  

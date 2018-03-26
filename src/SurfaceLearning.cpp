@@ -39,6 +39,22 @@ SurfaceLearning::SurfaceLearning(ros::NodeHandle &n, double frequency, std::stri
   _xAttractor << -0.60f,0.0f,0.2f;
 
   _Fd = 0.0f;
+  _useOptitrack = true;
+
+  if(_useOptitrack)
+  {
+    _firstOptitrackRobotPose = false;
+    _firstOptitrackP1Pose = false;
+    _firstOptitrackP2Pose = false;
+    _firstOptitrackP3Pose = false;
+  }
+  else
+  {
+    _firstOptitrackRobotPose = true;
+    _firstOptitrackP1Pose = true;
+    _firstOptitrackP2Pose = true;
+    _firstOptitrackP3Pose = true;    
+  }
 
 
 
@@ -53,6 +69,15 @@ SurfaceLearning::SurfaceLearning(ros::NodeHandle &n, double frequency, std::stri
 
   _sequenceID = 0;
   _normalDistance = 0.0f;
+
+  _optitrackOK = false;
+
+  _averageCount = 0;
+
+  _markersPosition.setConstant(0.0f);
+  _markersPosition0.setConstant(0.0f);
+  _markersSequenceID.setConstant(0);
+  _markersTracked.setConstant(0);
 
 
   _msgArrowMarker.header.frame_id = "world";
@@ -87,6 +112,11 @@ bool SurfaceLearning::init()
   _subRobotPose = _n.subscribe("/lwr/ee_pose", 1, &SurfaceLearning::updateRobotPose, this, ros::TransportHints().reliable().tcpNoDelay());
   _subRobotTwist = _n.subscribe("/lwr/ee_vel", 1, &SurfaceLearning::updateRobotTwist, this, ros::TransportHints().reliable().tcpNoDelay());
   _subForceTorqueSensor = _n.subscribe("/ft_sensor/netft_data", 1, &SurfaceLearning::updateRobotWrench, this, ros::TransportHints().reliable().tcpNoDelay());
+  _subOptitrackRobotBasisPose = _n.subscribe("/optitrack/robot/pose", 1, &SurfaceLearning::updateOptitrackRobotPose,this,ros::TransportHints().reliable().tcpNoDelay());
+  _subOptitrackPlane1Pose = _n.subscribe("/optitrack/plane1/pose", 1, &SurfaceLearning::updateOptitrackP1Pose,this,ros::TransportHints().reliable().tcpNoDelay());
+  _subOptitrackPlane2Pose = _n.subscribe("/optitrack/plane2/pose", 1, &SurfaceLearning::updateOptitrackP2Pose,this,ros::TransportHints().reliable().tcpNoDelay());
+  _subOptitrackPlane3Pose = _n.subscribe("/optitrack/plane3/pose", 1, &SurfaceLearning::updateOptitrackP3Pose,this,ros::TransportHints().reliable().tcpNoDelay());
+
 
   // Publisher definitions
   _pubDesiredTwist = _n.advertise<geometry_msgs::Twist>("/lwr/joint_controllers/passive_ds_command_vel", 1);
@@ -134,16 +164,7 @@ bool SurfaceLearning::init()
   }
   else if(_mode == LEARNING)
   {
-    // _inputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data_surface/"+_fileName+"_libsvm_data.txt");
-    // if(!_inputFile.is_open())
-    // {
-    //   ROS_ERROR("Cannot open libsvm data file");
-    //   return false;
-    // }
-    // else
-    // {
-    //   _inputFile.close();
-    // }  
+    _optitrackOK = true; 
   }
   else if(_mode == TESTING)
   {
@@ -181,29 +202,51 @@ void SurfaceLearning::run()
 {
   while (!_stop) 
   {
-    if(_firstRobotPose && _firstRobotTwist && _wrenchBiasOK)
+    if(_firstRobotPose && _firstRobotTwist && _wrenchBiasOK &&
+       _firstOptitrackRobotPose && _firstOptitrackP1Pose &&
+       _firstOptitrackP2Pose && _firstOptitrackP3Pose)
     {
       _mutex.lock();
 
-      switch(_mode)
+      if(!_optitrackOK)
       {
-        case COLLECTING_DATA:
+        optitrackInitialization();
+      }
+      else
+      {
+        switch(_mode)
         {
-          computeCommand();
-          
-          // Log data
-          logData();        
-          break;
-        }
-        case TESTING:
-        {
-          computeCommand();
-          break;
-        }
-        default:
-        {
-          break;
-        }
+          case COLLECTING_DATA:
+          {
+            computeCommand();
+            
+            // Log data
+            logData();        
+            break;
+          }
+          case LEARNING:
+          {
+            if(_processRawData)
+            {
+              processRawData();
+            }
+
+            learnSurfaceModel();
+
+            _stop = true;
+
+            break;
+          }
+          case TESTING:
+          {
+            computeCommand();
+            break;
+          }
+          default:
+          {
+            break;
+          }
+        }        
       }
 
      // Publish data to topics
@@ -212,11 +255,6 @@ void SurfaceLearning::run()
       _mutex.unlock();
     }
 
-    if(_mode == LEARNING)
-    {
-      me->_stop = true;
-    }
-    
     ros::spinOnce();
     _loopRate.sleep();
   }
@@ -235,16 +273,6 @@ void SurfaceLearning::run()
     _outputFile.close();
   }
   
-  if(_mode == LEARNING)
-  {
-    if(_processRawData)
-    {
-      processRawData();
-    }
-
-    learnSurfaceModel();
-  }
-
   ros::shutdown();
 }
 
@@ -260,8 +288,20 @@ void SurfaceLearning::computeCommand()
   if(_mode == TESTING)
   {
     _svm.preComputeKernel(true);
-    _normalDistance = _svm.calculateGamma(_x.cast<double>());
-    _e1 = -_svm.calculateGammaDerivative(_x.cast<double>()).cast<float>();
+    
+    Eigen::Vector3f x;
+    if(_useOptitrack)
+    {
+      x = _x-(_markersPosition.col(P1)-_markersPosition0.col(ROBOT_BASIS));
+    }
+    else
+    {
+      x = _x;
+    }
+
+    std::cerr << x.transpose() << std::endl;
+    _normalDistance = _svm.calculateGamma(x.cast<double>());
+    _e1 = -_svm.calculateGammaDerivative(x.cast<double>()).cast<float>();
     _e1.normalize();
     std::cerr << _normalDistance << " " << _e1.transpose() << std::endl;    
     if(_normalDistance<0.0f)
@@ -418,8 +458,6 @@ void SurfaceLearning::generateSVMGradModelFile()
 
     _outputFile.close();
   }
-
-
 }
 
 
@@ -466,9 +504,12 @@ void SurfaceLearning::processRawData()
       XsMax(k) = Xs.col(k).array().maxCoeff();
     }
 
+    std::cerr << XsMin.transpose() << std::endl;
+    std::cerr << XsMax.transpose() << std::endl;
+
     srand(time(NULL));
     Eigen::Matrix<float,Eigen::Dynamic,3> R;
-    R.resize(20000,3);
+    R.resize(30000,3);
     R.setRandom();
     R.array()+= 1.0f;
     R.array()/=2.0f;
@@ -546,11 +587,21 @@ void SurfaceLearning::processRawData()
 
 void SurfaceLearning::logData()
 {
-    _outputFile << ros::Time::now() << " "
-                << _x.transpose() << " "
-                << _v.transpose() << " "
-                << _filteredWrench.segment(0,3).transpose() << " "
-                << _sequenceID << std::endl;
+
+  Eigen::Vector3f x;
+  if(_useOptitrack)
+  {
+    x = _x-(_markersPosition.col(P1)-_markersPosition0.col(ROBOT_BASIS));
+  }
+  else
+  {
+    x = _x;
+  }
+  _outputFile << ros::Time::now() << " "
+              << x.transpose() << " "
+              << _v.transpose() << " "
+              << _filteredWrench.segment(0,3).transpose() << " "
+              << _sequenceID << std::endl;
 }
 
 void SurfaceLearning::publishData()
@@ -695,6 +746,99 @@ Eigen::Vector4f SurfaceLearning::quaternionProduct(Eigen::Vector4f q1, Eigen::Ve
   return q;
 }
 
+
+
+void SurfaceLearning::optitrackInitialization()
+{
+  if(_averageCount< AVERAGE_COUNT)
+  {
+    if(_markersTracked(ROBOT_BASIS))
+    {
+      _markersPosition0 = (_averageCount*_markersPosition0+_markersPosition)/(_averageCount+1);
+      _averageCount++;
+    }
+    std::cerr << "Optitrack Initialization count: " << _averageCount << std::endl;
+    if(_averageCount == 1)
+    {
+      ROS_INFO("Optitrack Initialization starting ...");
+    }
+    else if(_averageCount == AVERAGE_COUNT)
+    {
+      ROS_INFO("Optitrack Initialization done !");
+    }
+  }
+  else
+  {
+    _optitrackOK = true;
+  }
+}
+
+
+
+void SurfaceLearning::updateOptitrackRobotPose(const geometry_msgs::PoseStamped::ConstPtr& msg) 
+{
+  if(!_firstOptitrackRobotPose)
+  {
+    _firstOptitrackRobotPose = true;
+  }
+
+   _markersSequenceID(ROBOT_BASIS) = msg->header.seq;
+  _markersTracked(ROBOT_BASIS) = checkTrackedMarker(_markersPosition.col(ROBOT_BASIS)(0),msg->pose.position.x);
+  _markersPosition.col(ROBOT_BASIS) << msg->pose.position.x, msg->pose.position.y, msg->pose.position.z;
+  _markersPosition.col(ROBOT_BASIS)(2) -= 0.03f;
+}
+
+
+void SurfaceLearning::updateOptitrackP1Pose(const geometry_msgs::PoseStamped::ConstPtr& msg) 
+{
+  if(!_firstOptitrackP1Pose)
+  {
+    _firstOptitrackP1Pose = true;
+  }
+
+  _markersSequenceID(P1) = msg->header.seq;
+  _markersTracked(P1) = checkTrackedMarker(_markersPosition.col(P1)(0),msg->pose.position.x);
+  _markersPosition.col(P1) << msg->pose.position.x, msg->pose.position.y, msg->pose.position.z;
+}
+
+
+void SurfaceLearning::updateOptitrackP2Pose(const geometry_msgs::PoseStamped::ConstPtr& msg) 
+{
+
+  if(!_firstOptitrackP2Pose)
+  {
+    _firstOptitrackP2Pose = true;
+  }
+
+  _markersSequenceID(P2) = msg->header.seq;
+  _markersTracked(P2) = checkTrackedMarker(_markersPosition.col(P2)(0),msg->pose.position.x);
+  _markersPosition.col(P2) << msg->pose.position.x, msg->pose.position.y, msg->pose.position.z;
+}
+
+
+void SurfaceLearning::updateOptitrackP3Pose(const geometry_msgs::PoseStamped::ConstPtr& msg) 
+{
+  if(!_firstOptitrackP3Pose)
+  {
+    _firstOptitrackP3Pose = true;
+  }
+
+  _markersSequenceID(P3) = msg->header.seq;
+  _markersTracked(P3) = checkTrackedMarker(_markersPosition.col(P3)(0),msg->pose.position.x);
+  _markersPosition.col(P3) << msg->pose.position.x, msg->pose.position.y, msg->pose.position.z;
+}
+
+uint16_t SurfaceLearning::checkTrackedMarker(float a, float b)
+{
+  if(fabs(a-b)< FLT_EPSILON)
+  {
+    return 0;
+  }
+  else
+  {
+    return 1;
+  }
+}
 
 Eigen::Matrix3f SurfaceLearning::getSkewSymmetricMatrix(Eigen::Vector3f input)
 {

@@ -27,12 +27,16 @@
 #include "svm_grad.h"
 
 #define NB_SAMPLES 50
+#define AVERAGE_COUNT 100
+#define TOTAL_NB_MARKERS 4
+
 
 class SurfaceLearning 
 {
 	public:
 
 		enum Mode {COLLECTING_DATA = 0, LEARNING = 1, TESTING = 2};
+    enum MarkersID {ROBOT_BASIS = 0, P1 = 1, P2 = 2, P3 = 3};
 
 	private:
 
@@ -45,6 +49,11 @@ class SurfaceLearning
 		ros::Subscriber _subRobotPose;						// Subscribe to robot current pose
 		ros::Subscriber _subRobotTwist;						// Subscribe to robot current pose
 		ros::Subscriber _subForceTorqueSensor;				// Subscribe to robot current pose
+		ros::Subscriber _subOptitrackRobotBasisPose;
+		ros::Subscriber _subOptitrackPlane1Pose;
+		ros::Subscriber _subOptitrackPlane2Pose;
+		ros::Subscriber _subOptitrackPlane3Pose;
+
 
 		ros::Publisher _pubDesiredTwist;				// Publish desired twist
 		ros::Publisher _pubDesiredOrientation;  // Publish desired orientation
@@ -110,6 +119,13 @@ class SurfaceLearning
   	bool _stop;
   	bool _processRawData;
   	bool _useFullData;
+  	bool _useOptitrack;
+
+    bool _firstOptitrackRobotPose;
+    bool _firstOptitrackP1Pose;
+    bool _firstOptitrackP2Pose;
+    bool _firstOptitrackP3Pose;
+		bool _optitrackOK;
 
     uint32_t _sequenceID;
 
@@ -130,6 +146,13 @@ class SurfaceLearning
 		Eigen::Vector3f _vdR;
 
 		std::vector<Eigen::Vector3f> surfaceData;
+
+    Eigen::Matrix<float,3,TOTAL_NB_MARKERS> _markersPosition;
+    Eigen::Matrix<float,3,TOTAL_NB_MARKERS> _markersPosition0;
+    Eigen::Matrix<uint32_t,TOTAL_NB_MARKERS,1> _markersSequenceID;
+    Eigen::Matrix<uint16_t,TOTAL_NB_MARKERS,1> _markersTracked;
+		uint32_t _averageCount = 0;
+
 
 
 
@@ -160,11 +183,24 @@ class SurfaceLearning
 
     void publishData();
 
+
     void updateRobotPose(const geometry_msgs::Pose::ConstPtr& msg);
 
     void updateRobotTwist(const geometry_msgs::Twist::ConstPtr& msg);
 
     void updateRobotWrench(const geometry_msgs::WrenchStamped::ConstPtr& msg);
+
+    void optitrackInitialization();
+
+		void updateOptitrackRobotPose(const geometry_msgs::PoseStamped::ConstPtr& msg);
+
+		void updateOptitrackP1Pose(const geometry_msgs::PoseStamped::ConstPtr& msg);
+
+		void updateOptitrackP2Pose(const geometry_msgs::PoseStamped::ConstPtr& msg);
+
+		void updateOptitrackP3Pose(const geometry_msgs::PoseStamped::ConstPtr& msg);
+
+		uint16_t checkTrackedMarker(float a, float b);
 
     Eigen::Vector4f quaternionProduct(Eigen::Vector4f q1, Eigen::Vector4f q2);
 

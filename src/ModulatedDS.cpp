@@ -22,7 +22,7 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
   _gravity << 0.0f, 0.0f, -9.80665f;
   _loadOffset << 0.0f,0.0f,0.035f;
   _toolOffset = 0.14f;
-  _loadMass = 0.1f;
+  _loadMass = 0.0f;
 
   _x.setConstant(0.0f);
   _q.setConstant(0.0f);
@@ -40,12 +40,13 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
   _omegad.setConstant(0.0f);
   _qd.setConstant(0.0f);
 
-  _taskAttractor << -0.6f, 0.0f, 0.19f;
+  _taskAttractor << -0.56, 0.0f, 0.186f;
   _p << 0.0f,0.0f,0.19f;
   
   _planeNormal << 0.0f, 0.0f, 1.0f;
 
   _Fc.setConstant(0.0f);
+  _Tc.setConstant(0.0f);
 
   _firstRobotPose = false;
   _firstRobotTwist = false;
@@ -62,9 +63,17 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
   _firstOptitrackP1Pose = false;
   _firstOptitrackP2Pose = false;
   _firstOptitrackP3Pose = false;
+  _optitrackOK = false;
 
+  _averageCount = 0;
+
+  _markersPosition.setConstant(0.0f);
+  _markersPosition0.setConstant(0.0f);
+  _markersSequenceID.setConstant(0);
+  _markersTracked.setConstant(0);
 
   _lambda1 = 0.0f;
+  _integrator.setConstant(0.0f);
 
   _msgMarker.header.frame_id = "world";
   _msgMarker.header.stamp = ros::Time();
@@ -119,6 +128,28 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
   c.b = 0.7;
   c.a = 1.0;
 
+  _msgArrowMarker.header.frame_id = "world";
+  _msgArrowMarker.header.stamp = ros::Time();
+  _msgArrowMarker.ns = "marker_test_arrow";
+  _msgArrowMarker.id = 1;
+  _msgArrowMarker.type = visualization_msgs::Marker::ARROW;
+  _msgArrowMarker.action = visualization_msgs::Marker::ADD;
+  p1.x = 0.0f;
+  p1.y = 0.0f;
+  p1.z = 0.0f;
+  p2.x = 0.0f+0.3f*_e1(0);
+  p2.x = 0.0f+0.3f*_e1(1);
+  p2.x = 0.0f+0.3f*_e1(2);
+  _msgArrowMarker.scale.x = 0.05;
+  _msgArrowMarker.scale.y = 0.1;
+  _msgArrowMarker.scale.z = 0.1;
+  _msgArrowMarker.color.a = 1.0;
+  _msgArrowMarker.color.r = 1.0;
+  _msgArrowMarker.color.g = 0.0;
+  _msgArrowMarker.color.b = 0.0;
+  _msgArrowMarker.points.push_back(p1);
+  _msgArrowMarker.points.push_back(p2);
+
 
   for(int k = 0; k < 6; k++)
   {
@@ -131,8 +162,6 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
   _msgMarker.points.push_back(p4);
   _msgMarker.points.push_back(p5);
   _msgMarker.points.push_back(p6);
-
-
 
 }
 
@@ -154,7 +183,10 @@ bool ModulatedDS::init()
   _pubDesiredWrench = _n.advertise<geometry_msgs::Wrench>("/lwr/joint_controllers/passive_ds_command_force", 1);
   _pubFilteredWrench = _n.advertise<geometry_msgs::WrenchStamped>("ModulatedDS/filteredWrench", 1);
   _pubMarker = _n.advertise<visualization_msgs::Marker>("ModulatedDS/plane", 1);
-  _pubTaskAttractor = _n.advertise<geometry_msgs::PointStamped>("ModulatedDS/taskAttractor", 1);
+  _pubTaskAttractor = _n.advertise<geometry_msgs::PointStamped>("ModulatedDS/taskAttractor", 1);  
+  _pubNormalForce = _n.advertise<std_msgs::Float32>("ModulatedDS/normalForce", 1);
+  _pubOrientationIntegrator = _n.advertise<std_msgs::Float32>("/lwr/joint_controllers/passive_ds_command_orient_integrator", 1);
+
 
   // Dynamic reconfigure definition
   _dynRecCallback = boost::bind(&ModulatedDS::dynamicReconfigureCallback, this, _1, _2);
@@ -188,6 +220,7 @@ bool ModulatedDS::init()
     _firstOptitrackP1Pose = true;
     _firstOptitrackP2Pose = true;
     _firstOptitrackP3Pose = true;  
+    _optitrackOK = true;
   }
   else if(_surfaceType == PLANE_OPTITRACK)
   {
@@ -196,10 +229,7 @@ bool ModulatedDS::init()
   else if(_surfaceType == LEARNED_SURFACE)
   {
     ROS_INFO("Surface type: LEANRED_SURFACE");
-    _firstOptitrackRobotPose = true;
-    _firstOptitrackP1Pose = true;
-    _firstOptitrackP2Pose = true;
-    _firstOptitrackP3Pose = true;  
+
      std::string modelPath = ros::package::getPath(std::string("motion_force_control"))+"/data_surface/learned_surface_svmgrad_model.txt";
      _inputFile.open(modelPath);
      if(!_inputFile.is_open())
@@ -318,9 +348,16 @@ void ModulatedDS::run()
 
   _timeInit = ros::Time::now().toSec();
 
+  std_msgs::Float32 msg;
+  msg.data = 0.0f;
+  _pubOrientationIntegrator.publish(msg);
+  ros::spinOnce();
+  _loopRate.sleep();
+
   while (!_stop && ros::Time::now().toSec()-_timeInit < _duration) 
   {
-    // std::cerr << (int) _firstRobotPose << (int) _firstRobotTwist  << (int) _firstOptitrackRobotPose << (int) _firstOptitrackP1Pose << (int) _firstOptitrackP2Pose << (int) _firstOptitrackP3Pose << std::endl;
+
+
     if(_firstRobotPose && _firstRobotTwist && _wrenchBiasOK &&
        _firstOptitrackRobotPose && _firstOptitrackP1Pose &&
        _firstOptitrackP2Pose && _firstOptitrackP3Pose)
@@ -330,16 +367,24 @@ void ModulatedDS::run()
       // Check for update of passive ds controller eigen value
       ros::param::getCached("/lwr/ds_param/damping_eigval0",_lambda1);
 
-      // Compute control command
-      computeCommand();
+      if(!_optitrackOK)
+      {
+        optitrackInitialization();
+      }
+      else
+      {
+        // Compute control command
+        computeCommand();
 
-      // Publish data to topics
-      publishData();
+        // Publish data to topics
+        publishData();
 
-      // Log data
-      logData();
+        // Log data
+        logData();
+      }
 
       _mutex.unlock();
+
     }
 
     ros::spinOnce();
@@ -351,8 +396,11 @@ void ModulatedDS::run()
   _omegad.setConstant(0.0f);
   _qd = _q;
   _Fc.setConstant(0.0f);
+  _Tc.setConstant(0.0f);
 
   publishData();
+  msg.data = 0.0f;
+  _pubOrientationIntegrator.publish(msg);
   ros::spinOnce();
   _loopRate.sleep();
 
@@ -421,9 +469,9 @@ void ModulatedDS::computeProjectionOnSurface()
     }
     case PLANE_OPTITRACK:
     {
-      _p1 = _plane1Position-_robotBasisPosition;
-      _p2 = _plane2Position-_robotBasisPosition;
-      _p3 = _plane3Position-_robotBasisPosition;
+      _p1 = _markersPosition.col(P1)-_markersPosition0.col(ROBOT_BASIS);
+      _p2 = _markersPosition.col(P2)-_markersPosition0.col(ROBOT_BASIS);
+      _p3 = _markersPosition.col(P3)-_markersPosition0.col(ROBOT_BASIS);
       Eigen::Vector3f p13,p12;
       p13 = _p3-_p1;
       p12 = _p2-_p1;
@@ -445,8 +493,10 @@ void ModulatedDS::computeProjectionOnSurface()
     case LEARNED_SURFACE:
     {
       _svm.preComputeKernel(true);
-      _normalDistance = _svm.calculateGamma(_x.cast<double>());
-      _planeNormal = _svm.calculateGammaDerivative(_x.cast<double>()).cast<float>();
+      Eigen::Vector3f x;
+      x = _x-(_markersPosition.col(P1)-_markersPosition0.col(ROBOT_BASIS));
+      _normalDistance = _svm.calculateGamma(x.cast<double>());
+      _planeNormal = _svm.calculateGammaDerivative(x.cast<double>()).cast<float>();
       _planeNormal.normalize();
       _e1 = -_planeNormal;
        std::cerr << _normalDistance << " " << _e1.transpose() << std::endl;    
@@ -468,47 +518,6 @@ void ModulatedDS::computeProjectionOnSurface()
   // Compute normal force
   Eigen::Vector3f F = _filteredWrench.segment(0,3);
   _normalForce = _e1.dot(-_wRb*F);
-  // if(_useOptitrack)
-  // {
-  //   // Compute plane normal form markers position
-  //   _p1 = _plane1Position-_robotBasisPosition;
-  //   _p2 = _plane2Position-_robotBasisPosition;
-  //   _p3 = _plane3Position-_robotBasisPosition;
-  //   Eigen::Vector3f p13,p12;
-  //   p13 = _p3-_p1;
-  //   p12 = _p2-_p1;
-  //   p13 /= p13.norm();
-  //   p12 /= p12.norm();
-  //   _planeNormal = p13.cross(p12);
-  //   _planeNormal /= _planeNormal.norm();
-  // }
-
-  // // Compute vertical projection on surface
-  // _xProj = _x;
-
-  // if(_useOptitrack)
-  // {
-  //   _xProj(2) = (-_planeNormal(0)*(_xProj(0)-_p3(0))-_planeNormal(1)*(_xProj(1)-_p3(1))+_planeNormal(2)*_p3(2))/_planeNormal(2);
-  // }
-  // else
-  // {
-  //   _xProj(2) = (-_planeNormal(0)*(_xProj(0)-_p(0))-_planeNormal(1)*(_xProj(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
-  // }
-
-  // // Compute _e1 = normal vector pointing towards the surface
-  // _e1 = -_planeNormal;
-  
-  // // Compute signed normal distance to the plane
-  // _normalDistance = (_xProj-_x).dot(_e1);
-
-  // if(_normalDistance < 0.0f)
-  // {
-  //   _normalDistance = 0.0f;
-  // }
-
-  // // Compute normal force
-  // Eigen::Vector3f F = _filteredWrench.segment(0,3);
-  // _normalForce = _e1.dot(-_wRb*F);
 
 }
 
@@ -518,12 +527,13 @@ void ModulatedDS::computeOriginalDynamics()
   // Compute fixed attractor on plane
   if(_surfaceType == PLANE_OPTITRACK)
   {
-    _xAttractor = _p1+0.7f*(_p2-_p1)+0.5f*(_p3-_p1);
+    _xAttractor = _p1+0.5f*(_p2-_p1)+0.3f*(_p3-_p1);
     _xAttractor(2) = (-_planeNormal(0)*(_xAttractor(0)-_p1(0))-_planeNormal(1)*(_xAttractor(1)-_p1(1))+_planeNormal(2)*_p1(2))/_planeNormal(2);
   }
   else if(_surfaceType == PLANE || _surfaceType == LEARNED_SURFACE)
   {
     _xAttractor = _taskAttractor;
+    _xAttractor += _offset;
     _xAttractor(2) = (-_planeNormal(0)*(_xAttractor(0)-_p(0))-_planeNormal(1)*(_xAttractor(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
   }
   
@@ -776,7 +786,7 @@ void ModulatedDS::forceModulation()
 
   _Fc.setConstant(0.0f);
 
-  std::cerr << "vd after scaling: " << _vd.norm() << " distance: " << _normalDistance << std::endl;
+  std::cerr << "vd after scaling: " << _vd.norm() << " distance: " << _normalDistance << " v: " << _v.segment(0,3).norm() <<std::endl;
 }
 
 
@@ -821,6 +831,20 @@ void ModulatedDS::computeDesiredOrientation()
   wq = 5.0f*quaternionProduct(qcurI,_qd-_q);
   Eigen::Vector3f omegaTemp = _wRb*wq.segment(1,3);
   _omegad = omegaTemp; 
+  // _omegad.setConstant(0.0f);
+  std::cerr << "od:  "<<_omegad.transpose() << std::endl;
+  std::cerr << "o:  "<<_w.transpose()<< std::endl;
+
+  // std::cerr << omega.normalized() << " " << angle  <<std::endl;
+  // std::cerr << k.normalized() << std::endl;
+  // _integrator += _integratorGain*angle*omega;
+  // if(_integrator.norm()> 2*M_PI*_integratorGain)
+  // {
+  //   _integrator *= 2*M_PI*_integratorGain/_integrator.norm();
+  // }
+  // _Tc = _integrator;
+  // std::cerr << _Tc.transpose() << std::endl;
+  // _Tc = _wRb*_filteredWrench.segment(3,3);
 }
 
 void ModulatedDS::logData()
@@ -832,6 +856,8 @@ void ModulatedDS::logData()
                 << _vdR.transpose() << " "
                 << _vd.transpose() << " "
                 << _e1.transpose() << " "
+                << _wRb.col(2).transpose() << " "
+                << (_markersPosition.col(P1)-_markersPosition.col(ROBOT_BASIS)).transpose() << " "
                 << _normalDistance << " "
                 << _normalForce << " "
                 << _Fd*_lambda1 << " "
@@ -873,7 +899,7 @@ void ModulatedDS::publishData()
   Eigen::Vector3f center, u,v,n;
   if(_surfaceType == PLANE_OPTITRACK)
   {
-    center = _p1+0.5f*(_p2-_p1)+0.5f*(_p3-_p1); 
+    center = _p1+0.5f*(_p2-_p1)+0.2f*(_p3-_p1); 
     u = _p3-_p1;
     v = _p2-_p1;  
   }
@@ -901,7 +927,20 @@ void ModulatedDS::publishData()
   _msgMarker.pose.orientation.z = q(3);
   _msgMarker.pose.orientation.w = q(0);
 
+
   _pubMarker.publish(_msgMarker);
+
+  _msgArrowMarker.points.clear();
+  geometry_msgs::Point p1, p2;
+  p1.x = _x(0);
+  p1.y = _x(1);
+  p1.z = _x(2);
+  p2.x = _x(0)+0.3f*_e1(0);
+  p2.y = _x(1)+0.3f*_e1(1);
+  p2.z = _x(2)+0.3f*_e1(2);
+  _msgArrowMarker.points.push_back(p1);
+  _msgArrowMarker.points.push_back(p2);
+  _pubMarker.publish(_msgArrowMarker);
 
   _msgFilteredWrench.header.frame_id = "world";
   _msgFilteredWrench.header.stamp = ros::Time::now();
@@ -917,10 +956,14 @@ void ModulatedDS::publishData()
   _msgDesiredWrench.force.x = _Fc(0);
   _msgDesiredWrench.force.y = _Fc(1);
   _msgDesiredWrench.force.z = _Fc(2);
-  _msgDesiredWrench.torque.x = 0.0f;
-  _msgDesiredWrench.torque.y = 0.0f;
-  _msgDesiredWrench.torque.z = 0.0f;
+  _msgDesiredWrench.torque.x = _Tc(0);
+  _msgDesiredWrench.torque.y = _Tc(1);
+  _msgDesiredWrench.torque.z = _Tc(2);
   _pubDesiredWrench.publish(_msgDesiredWrench);
+
+  std_msgs::Float32 msg;
+  msg.data = _normalForce;
+  _pubNormalForce.publish(msg);
 }
 
 
@@ -1002,48 +1045,96 @@ void ModulatedDS::updateRobotWrench(const geometry_msgs::WrenchStamped::ConstPtr
 
 }
 
+void ModulatedDS::optitrackInitialization()
+{
+  if(_averageCount< AVERAGE_COUNT)
+  {
+    if(_markersTracked(ROBOT_BASIS))
+    {
+      _markersPosition0 = (_averageCount*_markersPosition0+_markersPosition)/(_averageCount+1);
+      _averageCount++;
+    }
+    std::cerr << "Optitrack Initialization count: " << _averageCount << std::endl;
+    if(_averageCount == 1)
+    {
+      ROS_INFO("Optitrack Initialization starting ...");
+    }
+    else if(_averageCount == AVERAGE_COUNT)
+    {
+      ROS_INFO("Optitrack Initialization done !");
+    }
+  }
+  else
+  {
+    _optitrackOK = true;
+  }
+}
+
+
 
 void ModulatedDS::updateOptitrackRobotPose(const geometry_msgs::PoseStamped::ConstPtr& msg) 
 {
-  _robotBasisPosition << msg->pose.position.x, msg->pose.position.y, msg->pose.position.z;
-
-  _robotBasisPosition(2) -= 0.03f;
   if(!_firstOptitrackRobotPose)
   {
     _firstOptitrackRobotPose = true;
   }
+
+   _markersSequenceID(ROBOT_BASIS) = msg->header.seq;
+  _markersTracked(ROBOT_BASIS) = checkTrackedMarker(_markersPosition.col(ROBOT_BASIS)(0),msg->pose.position.x);
+  _markersPosition.col(ROBOT_BASIS) << msg->pose.position.x, msg->pose.position.y, msg->pose.position.z;
+  _markersPosition.col(ROBOT_BASIS)(2) -= 0.03f;
 }
 
 
 void ModulatedDS::updateOptitrackP1Pose(const geometry_msgs::PoseStamped::ConstPtr& msg) 
 {
-  _plane1Position << msg->pose.position.x, msg->pose.position.y, msg->pose.position.z;
-
   if(!_firstOptitrackP1Pose)
   {
     _firstOptitrackP1Pose = true;
   }
+
+  _markersSequenceID(P1) = msg->header.seq;
+  _markersTracked(P1) = checkTrackedMarker(_markersPosition.col(P1)(0),msg->pose.position.x);
+  _markersPosition.col(P1) << msg->pose.position.x, msg->pose.position.y, msg->pose.position.z;
 }
 
 
 void ModulatedDS::updateOptitrackP2Pose(const geometry_msgs::PoseStamped::ConstPtr& msg) 
 {
-  _plane2Position << msg->pose.position.x, msg->pose.position.y, msg->pose.position.z;
 
   if(!_firstOptitrackP2Pose)
   {
     _firstOptitrackP2Pose = true;
   }
+
+  _markersSequenceID(P2) = msg->header.seq;
+  _markersTracked(P2) = checkTrackedMarker(_markersPosition.col(P2)(0),msg->pose.position.x);
+  _markersPosition.col(P2) << msg->pose.position.x, msg->pose.position.y, msg->pose.position.z;
 }
 
 
 void ModulatedDS::updateOptitrackP3Pose(const geometry_msgs::PoseStamped::ConstPtr& msg) 
 {
-  _plane3Position << msg->pose.position.x, msg->pose.position.y, msg->pose.position.z;
-
   if(!_firstOptitrackP3Pose)
   {
     _firstOptitrackP3Pose = true;
+  }
+
+  _markersSequenceID(P3) = msg->header.seq;
+  _markersTracked(P3) = checkTrackedMarker(_markersPosition.col(P3)(0),msg->pose.position.x);
+  _markersPosition.col(P3) << msg->pose.position.x, msg->pose.position.y, msg->pose.position.z;
+}
+
+
+uint16_t ModulatedDS::checkTrackedMarker(float a, float b)
+{
+  if(fabs(a-b)< FLT_EPSILON)
+  {
+    return 0;
+  }
+  else
+  {
+    return 1;
   }
 }
 
@@ -1209,5 +1300,10 @@ void ModulatedDS::dynamicReconfigureCallback(motion_force_control::modulatedDS_p
   _convergenceRate = config.convergenceRate;
   _filteredForceGain = config.filteredForceGain;
   _velocityLimit = config.velocityLimit;
+  _integratorGain = config.integratorGain;
   _duration = config.duration;
+  _offset(0) = config.xOffset;
+  _offset(1) = config.yOffset;
+  _offset(2) = config.zOffset;
+  _integrator.setConstant(0.0f);
 }

@@ -28,6 +28,8 @@
 #include "svm_grad.h"
 
 #define NB_SAMPLES 50
+#define AVERAGE_COUNT 100
+#define TOTAL_NB_MARKERS 4
 
 class ModulatedDS 
 {
@@ -39,6 +41,7 @@ class ModulatedDS
 		enum ModulationType	{ROTATION = 0, ROTATION_AND_FORCE = 1};
 		enum Formulation {F1 = 0, F2 = 1, F3 = 2};
 		enum Constraint {VELOCITY_NORM = 0, APPARENT_VELOCITY_NORM = 1};
+    enum MarkersID {ROBOT_BASIS = 0, P1 = 1, P2 = 2, P3 = 3};
 
 	private:
 
@@ -62,6 +65,8 @@ class ModulatedDS
 		ros::Publisher _pubFilteredWrench;
 		ros::Publisher _pubMarker;
 		ros::Publisher _pubTaskAttractor;
+		ros::Publisher _pubNormalForce;
+		ros::Publisher _pubOrientationIntegrator;
 		
 		// Subsciber and publisher messages declaration
 		geometry_msgs::Pose _msgRealPose;
@@ -70,6 +75,8 @@ class ModulatedDS
 		geometry_msgs::Twist _msgDesiredTwist;
 		geometry_msgs::Wrench _msgDesiredWrench;
 		visualization_msgs::Marker _msgMarker;
+		visualization_msgs::Marker _msgArrowMarker;
+
 		geometry_msgs::PointStamped _msgTaskAttractor;
 		geometry_msgs::WrenchStamped _msgFilteredWrench;
 		
@@ -117,10 +124,15 @@ class ModulatedDS
     float _normalForce;
     double _duration;
     double _timeInit;
+    Eigen::Vector3f _offset;
 
 		// Control variables
     float _convergenceRate;       // Convergence rate of the DS
 		Eigen::Vector3f _Fc;
+		Eigen::Vector3f _Tc;
+
+		float _integratorGain;
+		Eigen::Vector3f _integrator;
 		
     // Booleans
 		bool _firstRobotPose;	// Monitor the first robot pose update
@@ -130,14 +142,15 @@ class ModulatedDS
 		bool _firstOptitrackP1Pose;
 		bool _firstOptitrackP2Pose;
 		bool _firstOptitrackP3Pose;
+		bool _optitrackOK;
 		bool _wrenchBiasOK;
   	bool _stop;
 
-    // Optitrack variables
-		Eigen::Vector3f _robotBasisPosition;
-		Eigen::Vector3f _plane1Position;
-		Eigen::Vector3f _plane2Position;
-		Eigen::Vector3f _plane3Position;
+    // Optitrack 
+    Eigen::Matrix<float,3,TOTAL_NB_MARKERS> _markersPosition;
+    Eigen::Matrix<float,3,TOTAL_NB_MARKERS> _markersPosition0;
+    Eigen::Matrix<uint32_t,TOTAL_NB_MARKERS,1> _markersSequenceID;
+    Eigen::Matrix<uint16_t,TOTAL_NB_MARKERS,1> _markersTracked;
 		Eigen::Vector3f _p1;
 		Eigen::Vector3f _p2;
 		Eigen::Vector3f _p3;
@@ -153,6 +166,7 @@ class ModulatedDS
 		Formulation _formulation;
 		Constraint _constraint;
 		uint32_t _sequenceID;
+		uint32_t _averageCount = 0;
 
 		static ModulatedDS* me;
 		std::mutex _mutex;
@@ -179,6 +193,8 @@ class ModulatedDS
 	private:
 		
 	static void stopNode(int sig);
+
+
 		
     void computeCommand();
 
@@ -197,6 +213,8 @@ class ModulatedDS
     void logData();
 
     void publishData();
+    
+    void optitrackInitialization();
 
     void updateRobotPose(const geometry_msgs::Pose::ConstPtr& msg);
 
@@ -223,6 +241,8 @@ class ModulatedDS
 		void updateOptitrackP2Pose(const geometry_msgs::PoseStamped::ConstPtr& msg);
 
 		void updateOptitrackP3Pose(const geometry_msgs::PoseStamped::ConstPtr& msg);
+
+		uint16_t checkTrackedMarker(float a, float b);
 
     void dynamicReconfigureCallback(motion_force_control::modulatedDS_paramsConfig &config, uint32_t level);
 };
