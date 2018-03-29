@@ -40,7 +40,7 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
   _omegad.setConstant(0.0f);
   _qd.setConstant(0.0f);
 
-  _taskAttractor << -0.56, 0.0f, 0.186f;
+  _taskAttractor << -0.56, -0.0f, 0.186f;
   _p << 0.0f,0.0f,0.19f;
   
   _planeNormal << 0.0f, 0.0f, 1.0f;
@@ -458,6 +458,7 @@ void ModulatedDS::computeProjectionOnSurface()
   {
     case PLANE:
     {
+      _xProj = _x;
       _xProj(2) = (-_planeNormal(0)*(_xProj(0)-_p(0))-_planeNormal(1)*(_xProj(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
 
       // Compute _e1 = normal vector pointing towards the surface
@@ -546,8 +547,16 @@ void ModulatedDS::computeOriginalDynamics()
   }
   else if(_originalDynamics == ARBITRARY)
   {
-    float alpha = std::tanh(50.0f*_normalDistance);
-    _vdOrig = alpha*(_xProj-_x)+_convergenceRate*(1.0f-alpha)*(Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*getCyclingMotionVelocity(_x,_xAttractor);
+    float alpha = std::tanh(100.0f*_normalDistance);
+    // _vdOrig = alpha*(_xProj-_x)+_convergenceRate*(1.0f-alpha)*(Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*getCyclingMotionVelocity(_x,_xAttractor);
+    // if(_normalDistance> 0)
+    // {
+      _vdOrig = _convergenceRate*(_xProj-_x)+_convergenceRate*(1.0f-alpha)*(Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*(_xAttractor-_x);
+    // }
+    // else
+    // {
+      // _vdOrig = (1.0f-alpha)*(Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*(_xAttractor-_x);
+    // }
   }
 
   if(_vdOrig.norm()>_velocityLimit)
@@ -584,6 +593,7 @@ void ModulatedDS::rotatingDynamics()
   {
     Eigen::Vector3f vdContact;
     vdContact = (Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*getCyclingMotionVelocity(_x,_xAttractor);
+    
     vdContact.normalize();
 
     // Compute rotation angle
@@ -642,7 +652,19 @@ void ModulatedDS::forceModulation()
     _lambda1 = 1.0f;
   }
 
-  _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;
+  if((-_wRb*_filteredWrench.segment(0,3)).dot(_e1)<2.0f)
+  {
+    _Fd = 3.0f/_lambda1;
+  }
+  else
+  {
+    // _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;    
+    _Fd = (_targetForce*(1.0f-std::tanh(100.0f*_normalDistance))+_integratorGain*(_targetForce*(1.0f-std::tanh(100.0f*_normalDistance))+(_wRb*_filteredWrench.segment(0,3)).dot(_e1)))/_lambda1;    
+  }
+
+  std::cerr <<"Measured force: " << (-_wRb*_filteredWrench.segment(0,3)).dot(_e1) << " Fd:  " << _Fd*_lambda1 << std::endl;
+
+  // _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;
 
   // Compute diagonal gain matrix L(x)
   Eigen::Matrix3f L = Eigen::Matrix3f::Zero();
@@ -832,8 +854,8 @@ void ModulatedDS::computeDesiredOrientation()
   Eigen::Vector3f omegaTemp = _wRb*wq.segment(1,3);
   _omegad = omegaTemp; 
   // _omegad.setConstant(0.0f);
-  std::cerr << "od:  "<<_omegad.transpose() << std::endl;
-  std::cerr << "o:  "<<_w.transpose()<< std::endl;
+  // std::cerr << "od:  "<<_omegad.transpose() << std::endl;
+  // std::cerr << "o:  "<<_w.transpose()<< std::endl;
 
   // std::cerr << omega.normalized() << " " << angle  <<std::endl;
   // std::cerr << k.normalized() << std::endl;
