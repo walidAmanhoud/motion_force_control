@@ -47,6 +47,10 @@
   <build_depend>dynamic_reconfigure</build_depend>
   <build_depend>foot_interfaces</build_depend>
   <build_depend>svm_grad</build_depend>
+  <build_depend>kuka_fri_bridge</build_depend>
+  <build_depend>skinematics</build_depend>
+  <build_depend>generic_filters</build_depend>
+  <build_depend>passive_ds_control</build_depend>
 
   <run_depend>roscpp</run_depend>
   <run_depend>rospy</run_depend>
@@ -56,6 +60,10 @@
   <run_depend>dynamic_reconfigure</run_depend>
   <run_depend>foot_interfaces</run_depend>
   <run_depend>svm_grad</run_depend>
+  <run_depend>kuka_fri_bridge</run_depend>
+  <run_depend>skinematics</run_depend>
+  <run_depend>generic_filters</run_depend>
+  <run_depend>passive_ds_control</run_depend>
 
 <!--   <run_depend>message_runtime</run_depend>
  -->

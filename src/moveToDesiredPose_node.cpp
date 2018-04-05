@@ -8,7 +8,7 @@ int main(int argc, char **argv)
   // Ros initialization
   ros::init(argc, argv, "moveToDesiredPose");
 
-  Eigen::Vector3f desiredPosition;
+  Eigen::Vector3d desiredPosition;
 
   // Initialize desired position
   desiredPosition.setConstant(0.0f);
@@ -22,6 +22,10 @@ int main(int argc, char **argv)
     {
       desiredPosition(k) = atof(argv[k+1]);
     }
+  }
+  else
+  {
+    return 0;
   }
 
   std::cerr << desiredPosition << std::endl;

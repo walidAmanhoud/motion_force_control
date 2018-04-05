@@ -16,6 +16,10 @@ find_package(catkin REQUIRED COMPONENTS
   dynamic_reconfigure
   foot_interfaces
   svm_grad
+  kuka_fri_bridge
+  skinematics
+  generic_filters
+  passive_ds_control
 )
 
 # add_message_files(
@@ -33,12 +37,13 @@ generate_messages(DEPENDENCIES std_msgs)
 generate_dynamic_reconfigure_options(cfg/unifiedMotionForceController_params.cfg 
                                      cfg/motionController_params.cfg
                                      cfg/forceTaskSharedControl_params.cfg
-                                     cfg/modulatedDS_params.cfg)
+                                     cfg/modulatedDS_params.cfg
+                                     cfg/moveToDesiredPose_params.cfg)
 
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES ${PROJECT_NAME} passive_ds_force_controller
-  CATKIN_DEPENDS roscpp rospy std_msgs message_generation kdl_parser dynamic_reconfigure foot_interfaces svm_grad
+  CATKIN_DEPENDS roscpp rospy std_msgs message_generation kdl_parser dynamic_reconfigure foot_interfaces svm_grad kuka_fri_bridge skinematics generic_filters passive_ds_control
   # DEPENDS Eigen
  )
 
