@@ -26,6 +26,7 @@
 #include "geometry_msgs/Wrench.h"
 #include "geometry_msgs/Twist.h"
 #include "svm_grad.h"
+#include "std_msgs/Float32MultiArray.h"
 
 #define NB_SAMPLES 50
 #define AVERAGE_COUNT 100
@@ -58,6 +59,7 @@ class ModulatedDS
 		ros::Subscriber _subOptitrackPlane1Pose;
 		ros::Subscriber _subOptitrackPlane2Pose;
 		ros::Subscriber _subOptitrackPlane3Pose;
+		ros::Subscriber _subDampingMatrix;
 
 		ros::Publisher _pubDesiredTwist;				// Publish desired twist
 		ros::Publisher _pubDesiredOrientation;  // Publish desired orientation
@@ -142,9 +144,10 @@ class ModulatedDS
 		bool _firstOptitrackP1Pose;
 		bool _firstOptitrackP2Pose;
 		bool _firstOptitrackP3Pose;
+		bool _firstDampingMatrix;
 		bool _optitrackOK;
 		bool _wrenchBiasOK;
-  	bool _stop;
+  		bool _stop;
 
     // Optitrack 
     Eigen::Matrix<float,3,TOTAL_NB_MARKERS> _markersPosition;
@@ -179,6 +182,17 @@ class ModulatedDS
 		std::ofstream _outputFile;
 		SVMGrad _svm;
 
+		// Tank parameters
+		Eigen::Matrix3f _D;
+		float _s;
+		float _smax;
+		float _alpha;
+		float _beta;
+		float _betap;
+		float _gamma;
+		float _gammap;
+		float _ut;
+		float _vt;
 	public:
 
 		// Class constructor
@@ -205,6 +219,8 @@ class ModulatedDS
 		Eigen::Vector3f getCyclingMotionVelocity(Eigen::Vector3f position, Eigen::Vector3f attractor);
 
 		void rotatingDynamics();
+
+		void updateTankScalars();
 
 		void forceModulation();
 
@@ -241,6 +257,8 @@ class ModulatedDS
 		void updateOptitrackP2Pose(const geometry_msgs::PoseStamped::ConstPtr& msg);
 
 		void updateOptitrackP3Pose(const geometry_msgs::PoseStamped::ConstPtr& msg);
+
+    void updateDampingMatrix(const std_msgs::Float32MultiArray::ConstPtr& msg); 
 
 		uint16_t checkTrackedMarker(float a, float b);
 

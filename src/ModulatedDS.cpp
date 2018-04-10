@@ -75,6 +75,11 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
   _lambda1 = 0.0f;
   _integrator.setConstant(0.0f);
 
+  _firstDampingMatrix = false;
+  _D.setConstant(0.0f);
+  _s = 0.0f;
+  _smax = 0.6f;
+
   _msgMarker.header.frame_id = "world";
   _msgMarker.header.stamp = ros::Time();
   _msgMarker.ns = "marker_test_triangle_list";
@@ -176,6 +181,7 @@ bool ModulatedDS::init()
   _subOptitrackPlane1Pose = _n.subscribe("/optitrack/plane1/pose", 1, &ModulatedDS::updateOptitrackP1Pose,this,ros::TransportHints().reliable().tcpNoDelay());
   _subOptitrackPlane2Pose = _n.subscribe("/optitrack/plane2/pose", 1, &ModulatedDS::updateOptitrackP2Pose,this,ros::TransportHints().reliable().tcpNoDelay());
   _subOptitrackPlane3Pose = _n.subscribe("/optitrack/plane3/pose", 1, &ModulatedDS::updateOptitrackP3Pose,this,ros::TransportHints().reliable().tcpNoDelay());
+  _subDampingMatrix = _n.subscribe("/lwr/joint_controllers/passive_ds_damping_matrix", 1, &ModulatedDS::updateDampingMatrix,this,ros::TransportHints().reliable().tcpNoDelay());
 
   // Publisher definitions
   _pubDesiredTwist = _n.advertise<geometry_msgs::Twist>("/lwr/joint_controllers/passive_ds_command_vel", 1);
@@ -360,7 +366,8 @@ void ModulatedDS::run()
 
     if(_firstRobotPose && _firstRobotTwist && _wrenchBiasOK &&
        _firstOptitrackRobotPose && _firstOptitrackP1Pose &&
-       _firstOptitrackP2Pose && _firstOptitrackP3Pose)
+       _firstOptitrackP2Pose && _firstOptitrackP3Pose
+       && _firstDampingMatrix)
     {
       _mutex.lock();
 
@@ -434,6 +441,8 @@ void ModulatedDS::computeCommand()
     case ROTATION_AND_FORCE:
     {
       rotatingDynamics();
+
+      updateTankScalars();
 
       forceModulation();
       
@@ -623,6 +632,57 @@ void ModulatedDS::rotatingDynamics()
 }
 
 
+void ModulatedDS::updateTankScalars()
+{
+  if(_s>_smax)
+  {
+    _alpha = 0.0f;
+  }
+  else
+  {
+    _alpha = 1.0f;
+  }
+
+  _ut = _v.dot(_vdR);
+  if(_s < 0.0f && _ut < 0.0f)
+  {
+    _beta = 0.0f;
+  }
+  else if(_s > _smax && _ut > 0.0f)
+  {
+    _beta = 0.0f;
+  }
+  else
+  {
+    _beta = 1.0f;
+  }
+
+  _vt = _v.dot(_e1);
+  if(_s < 0.0f && _vt > 0.0f)
+  {
+    _gamma = 0.0f;
+  }
+  else if(_s > _smax && _vt < 0.0f)
+  {
+    _gamma = 0.0f;
+  }
+  else
+  {
+    _gamma = 1.0f;
+  }
+
+  if(_vt<0.0f)
+  {
+    _gammap = 1.0f;
+  }
+  else
+  {
+    _gammap = _gamma;
+  }
+
+}
+
+
 void ModulatedDS::forceModulation()
 {
   // Extract linear speed, force and torque data
@@ -661,10 +721,13 @@ void ModulatedDS::forceModulation()
     // _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;    
     _Fd = (_targetForce*(1.0f-std::tanh(100.0f*_normalDistance))+_integratorGain*(_targetForce*(1.0f-std::tanh(100.0f*_normalDistance))+(_wRb*_filteredWrench.segment(0,3)).dot(_e1)))/_lambda1;    
   }
+  // _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;
 
   std::cerr <<"Measured force: " << (-_wRb*_filteredWrench.segment(0,3)).dot(_e1) << " Fd:  " << _Fd*_lambda1 << std::endl;
 
-  // _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;
+
+
+
 
   // Compute diagonal gain matrix L(x)
   Eigen::Matrix3f L = Eigen::Matrix3f::Zero();
@@ -720,7 +783,8 @@ void ModulatedDS::forceModulation()
       }
       else
       {
-        lb = _Fd/temp;
+        // lb = _Fd/temp;
+        lb = _gammap*_Fd/temp;
       }
 
       if(_constraint == VELOCITY_NORM)
@@ -736,7 +800,21 @@ void ModulatedDS::forceModulation()
       {
         delta = 0.0f;
       }
-      la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdOrig.norm(),2.0f));
+      // la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdOrig.norm(),2.0f));
+      
+      if(_s <0.0f && _ut < 0.0f)
+      {
+        la = 1.0f;
+      }
+      else
+      {
+        la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdOrig.norm(),2.0f));
+      }
+
+
+      // Update tank dynamics
+      _s += _dt*(_alpha*_v.transpose()*_D*_v-_beta*_lambda1*(la-1.0f)*_ut-_gamma*_Fd*_vt);
+
 
       L(0,0) = la+lb;
       L(0,1) = lb;
@@ -1147,6 +1225,18 @@ void ModulatedDS::updateOptitrackP3Pose(const geometry_msgs::PoseStamped::ConstP
   _markersPosition.col(P3) << msg->pose.position.x, msg->pose.position.y, msg->pose.position.z;
 }
 
+
+void ModulatedDS::updateDampingMatrix(const std_msgs::Float32MultiArray::ConstPtr& msg) 
+{
+  if(!_firstDampingMatrix)
+  {
+    _firstDampingMatrix = true;
+  }
+
+  _D << msg->data[0],msg->data[1],msg->data[2],
+        msg->data[3],msg->data[4],msg->data[5],
+        msg->data[6],msg->data[7],msg->data[8];
+}
 
 uint16_t ModulatedDS::checkTrackedMarker(float a, float b)
 {
