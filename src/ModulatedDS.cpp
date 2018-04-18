@@ -41,6 +41,7 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
   _qd.setConstant(0.0f);
 
   _taskAttractor << -0.56, -0.0f, 0.186f;
+  _contactAttractor << -0.56, 0.2f, 0.186f;
   _p << 0.0f,0.0f,0.19f;
   
   _planeNormal << 0.0f, 0.0f, 1.0f;
@@ -556,10 +557,15 @@ void ModulatedDS::computeOriginalDynamics()
   else if(_originalDynamics == ARBITRARY)
   {
     float alpha = std::tanh(100.0f*_normalDistance);
+    Eigen::Vector3f temp;
+    temp = _contactAttractor;
+    temp(2) = (-_planeNormal(0)*(temp(0)-_p(0))-_planeNormal(1)*(temp(1)-_p(1))+_planeNormal(2)*_p(2))/_planeNormal(2);
+
     // _vdOrig = alpha*(_xProj-_x)+_convergenceRate*(1.0f-alpha)*(Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*getCyclingMotionVelocity(_x,_xAttractor);
     // if(_normalDistance> 0)
     // {
-      _vdOrig = _convergenceRate*(_xProj-_x)+_convergenceRate*(1.0f-alpha)*(Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*(_xAttractor-_x);
+      // _vdOrig = _convergenceRate*(_xProj-_x)+_convergenceRate*(1.0f-alpha)*(Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*(_xAttractor-_x);
+      _vdOrig = alpha*(temp-_x) +_convergenceRate*(1.0f-alpha)*(Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*(_xAttractor-_x);
     // }
     // else
     // {
@@ -642,6 +648,8 @@ void ModulatedDS::updateTankScalars()
     _alpha = 1.0f;
   }
 
+  float dz = 0.01f;
+  float ds = 0.1f*_smax;
 
   _alpha = smoothFall(_s,_smax-0.1f*_smax,_smax);
   _ut = _v.dot(_vdR);
@@ -658,6 +666,8 @@ void ModulatedDS::updateTankScalars()
   {
     _beta = 1.0f;
   }
+  
+  _beta = 1.0f-smoothRise(_s,_smax-ds,_smax)*smoothRise(_ut,-dz,0.0f)-smoothFall(_s,0.0f,ds)*smoothFall(_ut,0.0f,dz);
 
   //   if(_s <= 0.0f && _ut >= 0.0f)
   // {
@@ -673,12 +683,9 @@ void ModulatedDS::updateTankScalars()
   //   _beta = 1.0f;
   // }
 
-  float dz = 0.01f;
-  float ds = 0.1f*_smax;
 
-   // _beta = 1.0f-smoothRise(_s,_smax-ds,_smax)*smoothFall(_ut,0.0f,dz)-smoothFall(_s,0.0f,ds)*smoothRise(_ut,-dz,0.0f);
+  // _beta = 1.0f-smoothRise(_s,_smax-ds,_smax)*smoothFall(_ut,0.0f,dz)-smoothFall(_s,0.0f,ds)*smoothRise(_ut,-dz,0.0f);
 
-   _beta = 1.0f-smoothRise(_s,_smax-ds,_smax)*smoothRise(_ut,-dz,0.0f)-smoothFall(_s,0.0f,ds)*smoothFall(_ut,0.0f,dz);
 
 
   _vt = _v.dot(_e1);
@@ -812,8 +819,8 @@ void ModulatedDS::forceModulation()
       }
       else
       {
-        // lb = _Fd/temp;
-        lb = _gammap*_Fd/temp;
+        lb = _Fd/temp;
+        // lb = _gammap*_Fd/temp;
       }
 
       if(_constraint == VELOCITY_NORM)
@@ -830,16 +837,16 @@ void ModulatedDS::forceModulation()
         delta = 0.0f;
       }
 
-      // la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdOrig.norm(),2.0f));
+      la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdOrig.norm(),2.0f));
       
-      if(_s < 0.0f && _ut < 0.0f)
-      {
-        la = 1.0f;
-      }
-      else
-      {
-        la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdOrig.norm(),2.0f));
-      }
+      // if(_s < 0.0f && _ut < 0.0f)
+      // {
+      //   la = 1.0f;
+      // }
+      // else
+      // {
+      //   la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdOrig.norm(),2.0f));
+      // }
 
 
       // Update tank dynamics
@@ -868,10 +875,10 @@ void ModulatedDS::forceModulation()
       dW = _lambda1*(la-1.0f)*(1-_beta)*_ut+_Fd*(_gammap-_gamma)*_vt-(1-_alpha)*_v.transpose()*_D*_v;
 
       // std::cerr << "Tank: " << _s << " " <<_alpha*_v.transpose()*_D*_v<< " " << -_beta*_lambda1*(la-1.0f)*_ut << " " << -_gamma*_Fd*_vt << std::endl;
-      std::cerr << "at: " << _alpha*_v.transpose()*_D*_v << std::endl;
-      std::cerr << "ut: " << _ut <<  " " << -_beta*_lambda1*(la)*_ut << std::endl;
-      std::cerr << "vt: " << _vt << " " << -_gamma*_Fd*_vt << std::endl;
-      std::cerr << "Tank: " << _s  <<" dW: " << dW <<std::endl;
+      // std::cerr << "at: " << _alpha*_v.transpose()*_D*_v << std::endl;
+      // std::cerr << "ut: " << _ut <<  " " << -_beta*_lambda1*(la)*_ut << std::endl;
+      // std::cerr << "vt: " << _vt << " " << -_gamma*_Fd*_vt << std::endl;
+      // std::cerr << "Tank: " << _s  <<" dW: " << dW <<std::endl;
 
       L(0,0) = la+lb;
       L(0,1) = lb;

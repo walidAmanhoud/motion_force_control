@@ -113,14 +113,15 @@ class ModulatedDS
 		float _Fd;
 
 		// Task variables
-		Eigen::Vector3f _taskAttractor;
+    Eigen::Vector3f _taskAttractor;
+    Eigen::Vector3f _contactAttractor;
     Eigen::Vector3f _planeNormal;
     Eigen::Vector3f _e1;
     Eigen::Vector3f _e2;
     Eigen::Vector3f _e3;
     Eigen::Vector3f _p;
     Eigen::Vector3f _xProj;		
-    Eigen::Vector3f _xAttractor;     
+    Eigen::Vector3f _xAttractor;  
     float _vInit; 
     float _normalDistance;
     float _normalForce;
