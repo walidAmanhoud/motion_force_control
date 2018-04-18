@@ -77,8 +77,8 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
 
   _firstDampingMatrix = false;
   _D.setConstant(0.0f);
+  _smax = 0.2f;
   _s = 0.0f;
-  _smax = 0.6f;
 
   _msgMarker.header.frame_id = "world";
   _msgMarker.header.stamp = ros::Time();
@@ -175,7 +175,7 @@ bool ModulatedDS::init()
 {
   // Subscriber definitions
   _subRobotPose = _n.subscribe("/lwr/ee_pose", 1, &ModulatedDS::updateRobotPose, this, ros::TransportHints().reliable().tcpNoDelay());
-  _subRobotTwist = _n.subscribe("/lwr/ee_vel", 1, &ModulatedDS::updateRobotTwist, this, ros::TransportHints().reliable().tcpNoDelay());
+  _subRobotTwist = _n.subscribe("/lwr/joint_controllers/twist", 1, &ModulatedDS::updateRobotTwist, this, ros::TransportHints().reliable().tcpNoDelay());
   _subForceTorqueSensor = _n.subscribe("/ft_sensor/netft_data", 1, &ModulatedDS::updateRobotWrench, this, ros::TransportHints().reliable().tcpNoDelay());
   _subOptitrackRobotBasisPose = _n.subscribe("/optitrack/robot/pose", 1, &ModulatedDS::updateOptitrackRobotPose,this,ros::TransportHints().reliable().tcpNoDelay());
   _subOptitrackPlane1Pose = _n.subscribe("/optitrack/plane1/pose", 1, &ModulatedDS::updateOptitrackP1Pose,this,ros::TransportHints().reliable().tcpNoDelay());
@@ -366,8 +366,7 @@ void ModulatedDS::run()
 
     if(_firstRobotPose && _firstRobotTwist && _wrenchBiasOK &&
        _firstOptitrackRobotPose && _firstOptitrackP1Pose &&
-       _firstOptitrackP2Pose && _firstOptitrackP3Pose
-       && _firstDampingMatrix)
+       _firstOptitrackP2Pose && _firstOptitrackP3Pose)
     {
       _mutex.lock();
 
@@ -643,10 +642,13 @@ void ModulatedDS::updateTankScalars()
     _alpha = 1.0f;
   }
 
+
+  _alpha = smoothFall(_s,_smax-0.1f*_smax,_smax);
   _ut = _v.dot(_vdR);
   if(_s < 0.0f && _ut < 0.0f)
   {
     _beta = 0.0f;
+    ROS_INFO("BOOOOOOOOOOOOOUUUUUUUUU");
   }
   else if(_s > _smax && _ut > 0.0f)
   {
@@ -656,6 +658,28 @@ void ModulatedDS::updateTankScalars()
   {
     _beta = 1.0f;
   }
+
+  //   if(_s <= 0.0f && _ut >= 0.0f)
+  // {
+  //   _beta = 0.0f;
+  //   // std::cerr <<"bou" << std::endl;
+  // }
+  // else if(_s >= _smax && _ut <= 0.0f)
+  // {
+  //   _beta = 0.0f;
+  // }
+  // else
+  // {
+  //   _beta = 1.0f;
+  // }
+
+  float dz = 0.01f;
+  float ds = 0.1f*_smax;
+
+   // _beta = 1.0f-smoothRise(_s,_smax-ds,_smax)*smoothFall(_ut,0.0f,dz)-smoothFall(_s,0.0f,ds)*smoothRise(_ut,-dz,0.0f);
+
+   _beta = 1.0f-smoothRise(_s,_smax-ds,_smax)*smoothRise(_ut,-dz,0.0f)-smoothFall(_s,0.0f,ds)*smoothFall(_ut,0.0f,dz);
+
 
   _vt = _v.dot(_e1);
   if(_s < 0.0f && _vt > 0.0f)
@@ -671,6 +695,8 @@ void ModulatedDS::updateTankScalars()
     _gamma = 1.0f;
   }
 
+   // _gamma = 1.0f-smoothRise(_s,_smax-ds,_smax)*smoothFall(_vt,0.0f,dz)-smoothFall(_s,0.0f,ds)*smoothRise(_vt,-dz,0.0f);
+
   if(_vt<0.0f)
   {
     _gammap = 1.0f;
@@ -679,6 +705,8 @@ void ModulatedDS::updateTankScalars()
   {
     _gammap = _gamma;
   }
+
+  std::cerr << "alpha: " << _alpha << " beta: " << _beta << " gamma: " << _gamma << " gammap: " << _gammap << std::endl;
 
 }
 
@@ -718,12 +746,13 @@ void ModulatedDS::forceModulation()
   }
   else
   {
-    // _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;    
-    _Fd = (_targetForce*(1.0f-std::tanh(100.0f*_normalDistance))+_integratorGain*(_targetForce*(1.0f-std::tanh(100.0f*_normalDistance))+(_wRb*_filteredWrench.segment(0,3)).dot(_e1)))/_lambda1;    
+    _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;    
+    // _Fd = (_targetForce*(1.0f-std::tanh(100.0f*_normalDistance))+_integratorGain*(_targetForce*(1.0f-std::tanh(100.0f*_normalDistance))+(_wRb*_filteredWrench.segment(0,3)).dot(_e1)))/_lambda1;    
+
   }
   // _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;
 
-  std::cerr <<"Measured force: " << (-_wRb*_filteredWrench.segment(0,3)).dot(_e1) << " Fd:  " << _Fd*_lambda1 << std::endl;
+  // std::cerr <<"Measured force: " << (-_wRb*_filteredWrench.segment(0,3)).dot(_e1) << " Fd:  " << _Fd*_lambda1 << std::endl;
 
 
 
@@ -800,9 +829,10 @@ void ModulatedDS::forceModulation()
       {
         delta = 0.0f;
       }
+
       // la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdOrig.norm(),2.0f));
       
-      if(_s <0.0f && _ut < 0.0f)
+      if(_s < 0.0f && _ut < 0.0f)
       {
         la = 1.0f;
       }
@@ -813,8 +843,35 @@ void ModulatedDS::forceModulation()
 
 
       // Update tank dynamics
-      _s += _dt*(_alpha*_v.transpose()*_D*_v-_beta*_lambda1*(la-1.0f)*_ut-_gamma*_Fd*_vt);
+      float ds;
 
+      if(_firstDampingMatrix)
+      {
+        ds = _dt*(_alpha*_v.transpose()*_D*_v-_beta*_lambda1*(la-1.0f)*_ut-_gamma*_Fd*_vt);
+        // ds = _dt*(-_beta*_lambda1*(la-1.0f)*_ut-_gamma*_Fd*_vt);
+        // ds = _dt*(_alpha*_v.transpose()*_D*_v-_beta*_lambda1*la*_ut-_gamma*_Fd*_vt);
+        if(_s+ds>=_smax)
+        {
+          _s = _smax;
+        }
+        else if(_s+ds<=0.0f)
+        {
+          _s = 0.0f;
+        }
+        else
+        {
+          _s+=ds;
+        }
+      }
+
+      float dW;
+      dW = _lambda1*(la-1.0f)*(1-_beta)*_ut+_Fd*(_gammap-_gamma)*_vt-(1-_alpha)*_v.transpose()*_D*_v;
+
+      // std::cerr << "Tank: " << _s << " " <<_alpha*_v.transpose()*_D*_v<< " " << -_beta*_lambda1*(la-1.0f)*_ut << " " << -_gamma*_Fd*_vt << std::endl;
+      std::cerr << "at: " << _alpha*_v.transpose()*_D*_v << std::endl;
+      std::cerr << "ut: " << _ut <<  " " << -_beta*_lambda1*(la)*_ut << std::endl;
+      std::cerr << "vt: " << _vt << " " << -_gamma*_Fd*_vt << std::endl;
+      std::cerr << "Tank: " << _s  <<" dW: " << dW <<std::endl;
 
       L(0,0) = la+lb;
       L(0,1) = lb;
@@ -886,7 +943,7 @@ void ModulatedDS::forceModulation()
 
   _Fc.setConstant(0.0f);
 
-  std::cerr << "vd after scaling: " << _vd.norm() << " distance: " << _normalDistance << " v: " << _v.segment(0,3).norm() <<std::endl;
+  // std::cerr << "vd after scaling: " << _vd.norm() << " distance: " << _normalDistance << " v: " << _v.segment(0,3).norm() <<std::endl;
 }
 
 
@@ -945,6 +1002,8 @@ void ModulatedDS::computeDesiredOrientation()
   // _Tc = _integrator;
   // std::cerr << _Tc.transpose() << std::endl;
   // _Tc = _wRb*_filteredWrench.segment(3,3);
+    // _Fc = _integratorGain*(Eigen::MatrixXf::Identity(3,3)-_e1*_e1.transpose())*_wRb*_filteredWrench.segment(0,3);
+  // _Tc = _integratorGain*_wRb*_filteredWrench.segment(3,3);
 }
 
 void ModulatedDS::logData()
@@ -1418,4 +1477,33 @@ void ModulatedDS::dynamicReconfigureCallback(motion_force_control::modulatedDS_p
   _offset(1) = config.yOffset;
   _offset(2) = config.zOffset;
   _integrator.setConstant(0.0f);
+}
+
+float ModulatedDS::smoothRise(float x, float a, float b)
+{
+  float y; 
+  if(x<a)
+  {
+    y = 0.0f;
+  }
+  else if(x>b)
+  {
+    y = 1.0f;
+  }
+  else
+  {
+    y = (1.0f+sin(M_PI*(x-a)/(b-a)-M_PI/2.0f))/2.0f;
+  }
+
+  return y;
+}
+
+float ModulatedDS::smoothFall(float x, float a, float b)
+{
+  return 1.0f-smoothRise(x,a,b);
+}
+
+float ModulatedDS::smoothRiseFall(float x, float a, float b, float c, float d)
+{
+  return smoothRise(x,a,b)*smoothFall(x,c,d);
 }

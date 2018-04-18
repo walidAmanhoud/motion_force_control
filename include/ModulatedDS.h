@@ -263,6 +263,13 @@ class ModulatedDS
 		uint16_t checkTrackedMarker(float a, float b);
 
     void dynamicReconfigureCallback(motion_force_control::modulatedDS_paramsConfig &config, uint32_t level);
+
+    float smoothRise(float x, float a, float b);
+
+float smoothFall(float x, float a, float b);
+
+float smoothRiseFall(float x, float a, float b, float c, float d);
+
 };
 
 
