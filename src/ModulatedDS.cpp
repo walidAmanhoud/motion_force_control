@@ -40,8 +40,8 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
   _omegad.setConstant(0.0f);
   _qd.setConstant(0.0f);
 
-  _taskAttractor << -0.56, -0.0f, 0.186f;
-  _contactAttractor << -0.56, 0.2f, 0.186f;
+  _taskAttractor << -0.6f, -0.2f, 0.186f;
+  _contactAttractor << -0.6f, 0.2f, 0.186f;
   _p << 0.0f,0.0f,0.19f;
   
   _planeNormal << 0.0f, 0.0f, 1.0f;
@@ -565,12 +565,21 @@ void ModulatedDS::computeOriginalDynamics()
     // if(_normalDistance> 0)
     // {
       // _vdOrig = _convergenceRate*(_xProj-_x)+_convergenceRate*(1.0f-alpha)*(Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*(_xAttractor-_x);
-      _vdOrig = alpha*(temp-_x) +_convergenceRate*(1.0f-alpha)*(Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*(_xAttractor-_x);
+      _vdOrig = alpha*_convergenceRate*(temp-_x) +_convergenceRate*(1.0f-alpha)*(Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*(_xAttractor-_x);
     // }
     // else
     // {
       // _vdOrig = (1.0f-alpha)*(Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*(_xAttractor-_x);
     // }
+
+      if(fabs(_normalDistance)<FLT_EPSILON)
+      {
+        _vdOrig = (Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*(_xAttractor-_x);
+      }
+      else
+      {
+        _vdOrig = (temp-_x);
+      }
   }
 
   if(_vdOrig.norm()>_velocityLimit)
@@ -607,28 +616,38 @@ void ModulatedDS::rotatingDynamics()
   {
     Eigen::Vector3f vdContact;
     vdContact = (Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*getCyclingMotionVelocity(_x,_xAttractor);
+    // vdContact = (Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*(_xAttractor-_x);
+
+    // if((_xAttractor-_x).norm() < 1e-2f)
+    // {
+    //   _vdR.setConstant(0.0f);
+    // }
+    // else
+    {
+      vdContact.normalize();
+
+      // Compute rotation angle
+      float angle = std::acos(_vdOrig.normalized().dot(vdContact));
+      float theta = (1.0f-std::tanh(10*_normalDistance))*angle;
+
+      // Compute rotation direction
+      Eigen::Vector3f u = (_vdOrig.normalized()).cross(vdContact);
+      Eigen::Matrix3f K,R;
+
+      if(u.norm() < FLT_EPSILON)
+      {
+        R.setIdentity();
+      }
+      else
+      {
+        u/=u.norm();
+        K = getSkewSymmetricMatrix(u);
+        R = Eigen::Matrix3f::Identity()+std::sin(theta)*K+(1.0f-std::cos(theta))*K*K;
+      }
+      _vdR = R*_vdOrig;
+      
+    }
     
-    vdContact.normalize();
-
-    // Compute rotation angle
-    float angle = std::acos(_vdOrig.normalized().dot(vdContact));
-    float theta = (1.0f-std::tanh(10*_normalDistance))*angle;
-
-    // Compute rotation direction
-    Eigen::Vector3f u = (_vdOrig.normalized()).cross(vdContact);
-    Eigen::Matrix3f K,R;
-
-    if(u.norm() < FLT_EPSILON)
-    {
-      R.setIdentity();
-    }
-    else
-    {
-      u/=u.norm();
-      K = getSkewSymmetricMatrix(u);
-      R = Eigen::Matrix3f::Identity()+std::sin(theta)*K+(1.0f-std::cos(theta))*K*K;
-    }
-    _vdR = R*_vdOrig;
   }
   else
   {
@@ -667,7 +686,7 @@ void ModulatedDS::updateTankScalars()
     _beta = 1.0f;
   }
   
-  _beta = 1.0f-smoothRise(_s,_smax-ds,_smax)*smoothRise(_ut,-dz,0.0f)-smoothFall(_s,0.0f,ds)*smoothFall(_ut,0.0f,dz);
+  // _beta = 1.0f-smoothRise(_s,_smax-ds,_smax)*smoothRise(_ut,-dz,0.0f)-smoothFall(_s,0.0f,ds)*smoothFall(_ut,0.0f,dz);
 
   //   if(_s <= 0.0f && _ut >= 0.0f)
   // {
@@ -749,7 +768,7 @@ void ModulatedDS::forceModulation()
 
   if((-_wRb*_filteredWrench.segment(0,3)).dot(_e1)<2.0f)
   {
-    _Fd = 3.0f/_lambda1;
+    _Fd = 5.0f/_lambda1;
   }
   else
   {
@@ -759,7 +778,6 @@ void ModulatedDS::forceModulation()
   }
   // _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;
 
-  // std::cerr <<"Measured force: " << (-_wRb*_filteredWrench.segment(0,3)).dot(_e1) << " Fd:  " << _Fd*_lambda1 << std::endl;
 
 
 
@@ -825,19 +843,23 @@ void ModulatedDS::forceModulation()
 
       if(_constraint == VELOCITY_NORM)
       {
-        delta = std::pow(2.0f*_e1.dot(_vdR)*lb*temp,2.0f)-4.0f*std::pow(_vdOrig.norm(),2.0f)*(std::pow(lb*temp,2.0f)-std::pow(_vdOrig.norm(),2.0f));
+        delta = std::pow(2.0f*_e1.dot(_vdR)*lb*temp,2.0f)-4.0f*std::pow(_vdR.norm(),2.0f)*(std::pow(lb*temp,2.0f)-std::pow(_vdR.norm(),2.0f));
       }
       else if(_constraint == APPARENT_VELOCITY_NORM)
       {
-        delta = std::pow(2.0f*_e1.dot(_vdR)*lb*temp,2.0f)+4.0f*std::pow(_vdOrig.norm(),4.0f); 
+        delta = std::pow(2.0f*_e1.dot(_vdR)*lb*temp,2.0f)+4.0f*std::pow(_vdR.norm(),4.0f); 
       }
 
       if(delta < 0.0f)
       {
         delta = 0.0f;
+        la = 0.0f;
+      }
+      else
+      {
+        la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdR.norm(),2.0f));
       }
 
-      la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdOrig.norm(),2.0f));
       
       // if(_s < 0.0f && _ut < 0.0f)
       // {
@@ -876,7 +898,7 @@ void ModulatedDS::forceModulation()
 
       // std::cerr << "Tank: " << _s << " " <<_alpha*_v.transpose()*_D*_v<< " " << -_beta*_lambda1*(la-1.0f)*_ut << " " << -_gamma*_Fd*_vt << std::endl;
       // std::cerr << "at: " << _alpha*_v.transpose()*_D*_v << std::endl;
-      // std::cerr << "ut: " << _ut <<  " " << -_beta*_lambda1*(la)*_ut << std::endl;
+      // std::cerr << "ut: " << _ut <<  " " << -_beta*_lambda1*(la-1.0f)*_ut << std::endl;
       // std::cerr << "vt: " << _vt << " " << -_gamma*_Fd*_vt << std::endl;
       // std::cerr << "Tank: " << _s  <<" dW: " << dW <<std::endl;
 
@@ -937,10 +959,18 @@ void ModulatedDS::forceModulation()
 
   // Apply force modulation to the rotating dynamics
 
-  _vd = M*_vdR;
+  if(fabs(_vdR.norm())<FLT_EPSILON)
+  {
+    _vd = _Fd*_e1;
+  }
+  else
+  {
+    _vd = M*_vdR;
+  }
 
+
+  std::cerr <<"Measured force: " << (-_wRb*_filteredWrench.segment(0,3)).dot(_e1) << " Fd:  " << _Fd*_lambda1 << " vdR: " << _vdR.norm() << std::endl;
   std::cerr << "delta: " << delta << " la: " << la << " lb: " << lb << " vd: " << _vd.norm() << std::endl;
-
 
   // Bound desired velocity  
   if(_vd.norm()>_velocityLimit)
@@ -950,7 +980,7 @@ void ModulatedDS::forceModulation()
 
   _Fc.setConstant(0.0f);
 
-  // std::cerr << "vd after scaling: " << _vd.norm() << " distance: " << _normalDistance << " v: " << _v.segment(0,3).norm() <<std::endl;
+  std::cerr << "vd after scaling: " << _vd.norm() << " distance: " << _normalDistance << " v: " << _v.segment(0,3).norm() <<std::endl;
 }
 
 
