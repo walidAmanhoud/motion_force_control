@@ -13,7 +13,7 @@ int main(int argc, char **argv)
   // Initialize desired position
   desiredPosition.setConstant(0.0f);
 
-
+  bool bimanual;
 
   // Check if desired position is specified with the command line
   if(argc == 4)
@@ -22,13 +22,30 @@ int main(int argc, char **argv)
     {
       desiredPosition(k) = atof(argv[k+1]);
     }
+    bimanual = false;
+  }
+  else if(argc == 5)
+  {
+    for(int k = 0; k < 3; k++)
+    {
+      desiredPosition(k) = atof(argv[k+1]);
+    }
+
+    if(std::string(argv[4]) == "-bimanual")
+    {
+      bimanual = true;
+    }
+    else
+    {
+      bimanual = false;
+    }
   }
 
   std::cerr << desiredPosition << std::endl;
   ros::NodeHandle n;
   float frequency = 200.0f;
 
-  MoveToDesiredPose moveToDesiredPose(n,frequency);
+  MoveToDesiredPose moveToDesiredPose(n,frequency,bimanual);
 
   if (!moveToDesiredPose.init()) 
   {

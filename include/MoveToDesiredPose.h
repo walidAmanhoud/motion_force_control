@@ -14,33 +14,34 @@
 
 class MoveToDesiredPose 
 {
-
 	private:
+
+		enum ROBOT {LEFT = 0, RIGHT = 1};
 
 		// ROS variables
 		ros::NodeHandle _n;
 		ros::Rate _loopRate;
 
 		// Subscribers and publishers definition
-		ros::Subscriber _subRealPose;			// Subscribe to robot current pose
-		ros::Publisher _pubDesiredTwist;		// Publish desired twist
-		ros::Publisher _pubDesiredOrientation;  // Publish desired orientation
+		ros::Subscriber _subRealPose[2];			// Subscribe to robot current pose
+		ros::Publisher _pubDesiredTwist[2];		// Publish desired twist
+		ros::Publisher _pubDesiredOrientation[2];  // Publish desired orientation
 
-		geometry_msgs::Pose _msgRealPose;
 		geometry_msgs::Pose _msgDesiredPose;
 		geometry_msgs::Quaternion _msgDesiredOrientation;
 		geometry_msgs::Twist _msgDesiredTwist;
 
 		// Node variables
-		Eigen::Vector3f _x;
-		Eigen::Vector3f _xd;
-		Eigen::Vector4f _qd;
-		Eigen::Vector4f _q;
-		Eigen::Matrix3f _wRb;
-		Eigen::Vector3f _omegad;
-		Eigen::Vector3f _vd;
+		Eigen::Vector3f _x[2];
+		Eigen::Vector3f _xd[2];
+		Eigen::Vector4f _qd[2];
+		Eigen::Vector4f _q[2];
+		Eigen::Matrix3f _wRb[2];
+		Eigen::Vector3f _omegad[2];
+		Eigen::Vector3f _vd[2];
 		float _jointTolerance;
-		bool _firstRealPoseReceived;
+		bool _firstRealPoseReceived[2];
+		bool _bimanual;
 		float _toolOffset;
 
 
@@ -51,7 +52,7 @@ class MoveToDesiredPose
 		static MoveToDesiredPose* me;
 
 	public:
-		MoveToDesiredPose(ros::NodeHandle &n, float frequency, float jointTolerance = 1.0e-3f);
+		MoveToDesiredPose(ros::NodeHandle &n, float frequency, bool bimanual);
 
 		// Initialize node
 		bool init();
@@ -70,7 +71,8 @@ class MoveToDesiredPose
     
    	 	void publishData();
 
-    	void updateRealPose(const geometry_msgs::Pose::ConstPtr& msg);
+    	void updateRealPoseRight(const geometry_msgs::Pose::ConstPtr& msg);
+    	void updateRealPoseLeft(const geometry_msgs::Pose::ConstPtr& msg);
 
     	Eigen::Matrix3f quaternionToRotationMatrix(Eigen::Vector4f q);
 

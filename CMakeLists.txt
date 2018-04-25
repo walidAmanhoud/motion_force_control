@@ -70,6 +70,12 @@ add_executable(surfaceLearning src/surfaceLearning_node.cpp src/SurfaceLearning.
 target_link_libraries(surfaceLearning ${catkin_LIBRARIES})
 add_dependencies(surfaceLearning ${PROJECT_NAME}_gencpp)
 
+
+add_executable(objectGrabbing src/objectGrabbing_node.cpp src/ObjectGrabbing.cpp)
+target_link_libraries(objectGrabbing ${catkin_LIBRARIES})
+add_dependencies(objectGrabbing ${PROJECT_NAME}_gencpp)
+
+
 #this step is required to have the files how up in qtcreator
 # file(GLOB HEADERS "include/*.h")
 #file(GLOB HEADERS "include/locally_modulated_ds/*.h")
