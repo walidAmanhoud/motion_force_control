@@ -1,5 +1,5 @@
 #include "MoveToDesiredPose.h"
-// #include <tf/transform_datatypes.h>
+#include <boost/bind.hpp>
 
 MoveToDesiredPose* MoveToDesiredPose::me = NULL;
 
@@ -36,13 +36,14 @@ bool MoveToDesiredPose::init()
   _stop = false;
   _toolOffset = 0.14f;
 
-  _subRealPose[RIGHT] = _n.subscribe("/lwr/ee_pose", 1, &MoveToDesiredPose::updateRealPoseRight, this, ros::TransportHints().reliable().tcpNoDelay());
+
+  _subRealPose[RIGHT] = _n.subscribe<geometry_msgs::Pose>("/lwr/ee_pose", 1,boost::bind(&MoveToDesiredPose::updateRealPose,this,_1,RIGHT),ros::VoidPtr(),ros::TransportHints().reliable().tcpNoDelay());
   _pubDesiredTwist[RIGHT] = _n.advertise<geometry_msgs::Twist>("/lwr/joint_controllers/passive_ds_command_vel", 1);
   _pubDesiredOrientation[RIGHT] = _n.advertise<geometry_msgs::Quaternion>("/lwr/joint_controllers/passive_ds_command_orient", 1);
 
   if(_bimanual)
   {
-    _subRealPose[LEFT] = _n.subscribe("/lwr2/ee_pose", 1, &MoveToDesiredPose::updateRealPoseLeft, this, ros::TransportHints().reliable().tcpNoDelay());
+    _subRealPose[LEFT] = _n.subscribe<geometry_msgs::Pose>("/lwr2/ee_pose", 1, boost::bind(&MoveToDesiredPose::updateRealPose,this,_1,LEFT),ros::VoidPtr(),ros::TransportHints().reliable().tcpNoDelay());
     _pubDesiredTwist[LEFT] = _n.advertise<geometry_msgs::Twist>("/lwr2/joint_controllers/passive_ds_command_vel", 1);
     _pubDesiredOrientation[LEFT] = _n.advertise<geometry_msgs::Quaternion>("/lwr2/joint_controllers/passive_ds_command_orient", 1);
   }
@@ -191,38 +192,19 @@ void MoveToDesiredPose::publishData()
 }
 
 
-void MoveToDesiredPose::updateRealPoseRight(const geometry_msgs::Pose::ConstPtr& msg)
+void MoveToDesiredPose::updateRealPose(const geometry_msgs::Pose::ConstPtr& msg, int k)
 {
-
   // Update end effecotr pose (position+orientation)
-  _x[RIGHT] << msg->position.x, msg->position.y, msg->position.z;
-  _q[RIGHT] << msg->orientation.w, msg->orientation.x, msg->orientation.y, msg->orientation.z;
-  _wRb[RIGHT] = quaternionToRotationMatrix(_q[RIGHT]);
-  _x[RIGHT] = _x[RIGHT]+_toolOffset*_wRb[RIGHT].col(2);
+  _x[k] << msg->position.x, msg->position.y, msg->position.z;
+  _q[k] << msg->orientation.w, msg->orientation.x, msg->orientation.y, msg->orientation.z;
+  _wRb[k] = quaternionToRotationMatrix(_q[k]);
+  _x[k] = _x[k]+_toolOffset*_wRb[k].col(2);
 
-  if(!_firstRealPoseReceived[RIGHT])
+  if(!_firstRealPoseReceived[k])
   {
-    _firstRealPoseReceived[RIGHT] = true;
-    _qd[RIGHT] = _q[RIGHT];
-    _vd[RIGHT].setConstant(0.0f);
-  }
-}
-
-
-void MoveToDesiredPose::updateRealPoseLeft(const geometry_msgs::Pose::ConstPtr& msg)
-{
-
-  // Update end effecotr pose (position+orientation)
-  _x[LEFT] << msg->position.x, msg->position.y, msg->position.z;
-  _q[LEFT] << msg->orientation.w, msg->orientation.x, msg->orientation.y, msg->orientation.z;
-  _wRb[LEFT] = quaternionToRotationMatrix(_q[LEFT]);
-  _x[LEFT] = _x[LEFT]+_toolOffset*_wRb[LEFT].col(2);
-
-  if(!_firstRealPoseReceived[LEFT])
-  {
-    _firstRealPoseReceived[LEFT] = true;
-    _qd[LEFT] = _q[LEFT];
-    _vd[LEFT].setConstant(0.0f);
+    _firstRealPoseReceived[k] = true;
+    _qd[k] = _q[k];
+    _vd[k].setConstant(0.0f);
   }
 }
 

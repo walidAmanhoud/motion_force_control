@@ -71,8 +71,7 @@ class MoveToDesiredPose
     
    	 	void publishData();
 
-    	void updateRealPoseRight(const geometry_msgs::Pose::ConstPtr& msg);
-    	void updateRealPoseLeft(const geometry_msgs::Pose::ConstPtr& msg);
+    	void updateRealPose(const geometry_msgs::Pose::ConstPtr& msg, int robotID);
 
     	Eigen::Matrix3f quaternionToRotationMatrix(Eigen::Vector4f q);
 
