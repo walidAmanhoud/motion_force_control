@@ -13,10 +13,11 @@ ObjectGrabbing::ObjectGrabbing(ros::NodeHandle &n, double frequency, float targe
 
   _gravity << 0.0f, 0.0f, -9.80665f;
   _loadOffset << 0.0f,0.0f,0.035f;
-  _toolOffset = 0.14f;
-  _loadMass = 0.0f;
+  // _toolOffset = 0.14f;
+  _toolOffset = 0.0f;
+  _loadMass = 0.7f;
 
-  for(int k= 0; k <2; k++)
+  for(int k= 0; k < NB_ROBOTS; k++)
   {
     _x[k].setConstant(0.0f);
     _q[k].setConstant(0.0f);
@@ -44,15 +45,32 @@ ObjectGrabbing::ObjectGrabbing(ros::NodeHandle &n, double frequency, float targe
   for(int k = 0; k < TOTAL_NB_MARKERS; k++)
   {
     _firstOptitrackPose[k] = true;
+    _markersPosition.setConstant(0.0f);
+    _markersPosition0.setConstant(0.0f);
   }
+
+  _leftRobotOrigin << 0.078f, 0.9f, 0.0f;
+  _objectDim << 0.3f, 0.4f, 0.3f;
+  _xo << -0.3f, _leftRobotOrigin(1)/2.0f, _objectDim(2)/2.0f;
+
 
   _taskAttractor << -0.6f, -0.2f, 0.186f;
   _contactAttractor << -0.6f, 0.2f, 0.186f;
   _p << 0.0f,0.0f,0.19f;
-  
+
+  Eigen::Vector3f x, y, z;
+  x << 1.0f, 0.0f, 0.0f;
+  y << 0.0f, 1.0f, 0.0f;
+  z << 0.0f, 0.0f, 1.0f;
+
+  _p1 = _xo-_objectDim(0)/2.0f*x+_objectDim(1)/2.0f*y+_objectDim(2)/2.0f*z;
+  _p2 = _xo+_objectDim(0)/2.0f*x+_objectDim(1)/2.0f*y+_objectDim(2)/2.0f*z;
+  _p3 = _xo+_objectDim(0)/2.0f*x-_objectDim(1)/2.0f*y+_objectDim(2)/2.0f*z;
+  _p4 = _xo-_objectDim(0)/2.0f*x-_objectDim(1)/2.0f*y+_objectDim(2)/2.0f*z;
+
   _stop = false;
 
-  _optitrackOK = false;
+  _optitrackOK = true;
 
   _averageCount = 0;
 
@@ -68,24 +86,28 @@ ObjectGrabbing::ObjectGrabbing(ros::NodeHandle &n, double frequency, float targe
   // _smax = 0.2f;
   // _s = 0.0f;
 
-  // _msgMarker.header.frame_id = "world";
-  // _msgMarker.header.stamp = ros::Time();
-  // _msgMarker.ns = "marker_test_triangle_list";
-  // _msgMarker.id = 0;
-  // _msgMarker.type = visualization_msgs::Marker::TRIANGLE_LIST;
-  // _msgMarker.action = visualization_msgs::Marker::ADD;
-  // _msgMarker.pose.position.x = _p(0);
-  // _msgMarker.pose.position.y = _p(1);
-  // _msgMarker.pose.position.z = _p(2);
-  // _msgMarker.pose.orientation.x = 0.0;
-  // _msgMarker.pose.orientation.y = 1.0;
-  // _msgMarker.pose.orientation.z = 0.0;
-  // _msgMarker.pose.orientation.w = 0.0;
-  // _msgMarker.scale.x = 1.0;
-  // _msgMarker.scale.y = 1.0;
-  // _msgMarker.scale.z = 1.0;
-  // _msgMarker.color.a = 1.0;
+  _msgMarker.header.frame_id = "world";
+  _msgMarker.header.stamp = ros::Time();
+  _msgMarker.ns = "object_shape";
+  _msgMarker.id = 0;
+  _msgMarker.type = visualization_msgs::Marker::CUBE;
+  _msgMarker.action = visualization_msgs::Marker::ADD;
+  _msgMarker.pose.position.x = _xo(0);
+  _msgMarker.pose.position.y = _xo(1);
+  _msgMarker.pose.position.z = _xo(2);
+  _msgMarker.pose.orientation.x = 0.0;
+  _msgMarker.pose.orientation.y = 0.0;
+  _msgMarker.pose.orientation.z = 0.0;
+  _msgMarker.pose.orientation.w = 1.0;
+  _msgMarker.scale.x = _objectDim(0);
+  _msgMarker.scale.y = _objectDim(1);
+  _msgMarker.scale.z = _objectDim(2);
+  _msgMarker.color.a = 1.0;
 
+  _msgMarker.color.r = 0.1f;
+  _msgMarker.color.g = 0.3f;
+  _msgMarker.color.b = 0.9f;
+  _msgMarker.color.a = 1.0;
   // geometry_msgs::Point p1,p2,p3,p4,p5,p6;
   // float objectWidth = 0.59f;
   // float objectLength = 0.82f;
@@ -190,7 +212,7 @@ bool ObjectGrabbing::init()
   _pubDesiredWrench[LEFT] = _n.advertise<geometry_msgs::Wrench>("/lwr2/joint_controllers/passive_ds_command_force", 1);
   _pubFilteredWrench[LEFT] = _n.advertise<geometry_msgs::WrenchStamped>("ObjectGrabbing/filteredWrenchLeft", 1);
   _pubNormalForce[LEFT] = _n.advertise<std_msgs::Float32>("ObjectGrabbing/normalForceLeft", 1);
-  // _pubMarker = _n.advertise<visualization_msgs::Marker>("ObjectGrabbing/plane", 1);
+  _pubMarker = _n.advertise<visualization_msgs::Marker>("ObjectGrabbing/cube", 1);
   // _pubTaskAttractor = _n.advertise<geometry_msgs::PointStamped>("ObjectGrabbing/taskAttractor", 1);  
 
   // Dynamic reconfigure definition
@@ -201,8 +223,8 @@ bool ObjectGrabbing::init()
 
   if(!_n.getParamCached("/lwr/ds_param/damping_eigval0",_lambda1))
   {
-    ROS_ERROR("Cannot read first eigen value of passive ds controller");
-    return false;
+    // ROS_ERROR("Cannot read first eigen value of passive ds controller");
+    // return false;
   }
 
   if(_targetVelocity>0.0f)
@@ -245,17 +267,16 @@ void ObjectGrabbing::run()
 
   while (!_stop) 
   {
-
-
-    if(_firstRobotPose[RIGHT] && _firstRobotTwist[RIGHT] && _wrenchBiasOK[RIGHT] &&
-       _firstRobotPose[LEFT] && _firstRobotTwist[LEFT] && _wrenchBiasOK[LEFT] &&
+    if(_firstRobotPose[RIGHT] && _firstRobotPose[LEFT] &&
+    // _wrenchBiasOK[RIGHT] && _wrenchBiasOK[LEFT] &&
        _firstOptitrackPose[ROBOT_BASIS_RIGHT] && _firstOptitrackPose[ROBOT_BASIS_LEFT] && _firstOptitrackPose[P1] &&
        _firstOptitrackPose[P2] && _firstOptitrackPose[P3] && _firstOptitrackPose[P4])
     {
       _mutex.lock();
 
       // Check for update of passive ds controller eigen value
-      ros::param::getCached("/lwr/ds_param/damping_eigval0",_lambda1);
+      // ros::param::getCached("/lwr/ds_param/damping_eigval0",_lambda1);
+
 
       if(!_optitrackOK)
       {
@@ -263,6 +284,7 @@ void ObjectGrabbing::run()
       }
       else
       {
+        // computeAttractors();
         // Compute control command
         computeCommand();
 
@@ -270,7 +292,7 @@ void ObjectGrabbing::run()
         publishData();
 
         // Log data
-        logData();
+        // logData();
       }
 
       _mutex.unlock();
@@ -282,17 +304,15 @@ void ObjectGrabbing::run()
     _loopRate.sleep();
   }
 
-  _vd[RIGHT].setConstant(0.0f);
-  _omegad[RIGHT].setConstant(0.0f);
-  _qd[RIGHT] = _q[RIGHT];
-  _Fc[RIGHT].setConstant(0.0f);
-  _Tc[RIGHT].setConstant(0.0f);
 
-  _vd[LEFT].setConstant(0.0f);
-  _omegad[LEFT].setConstant(0.0f);
-  _qd[LEFT] = _q[LEFT];
-  _Fc[LEFT].setConstant(0.0f);
-  _Tc[LEFT].setConstant(0.0f);
+  for(int k = 0; k < NB_ROBOTS; k++)
+  {
+    _vd[k].setConstant(0.0f);
+    _omegad[k].setConstant(0.0f);
+    _qd[k] = _q[k];
+    _Fc[k].setConstant(0.0f);
+    _Tc[k].setConstant(0.0f);
+  }
 
   publishData();
   ros::spinOnce();
@@ -331,6 +351,33 @@ void ObjectGrabbing::computeProjectionOnSurface()
 
 void ObjectGrabbing::computeOriginalDynamics()
 {
+  // Compute coupled DS
+  _xc = (_x[LEFT]+_x[RIGHT])/2.0f;
+  _xl = (_x[RIGHT]-_x[LEFT]);
+
+  Eigen::Vector3f vdc;
+  Eigen::Vector3f vdl;
+
+  vdc = 3.0f*(_xo-_xc);
+  vdl = 3.0f*((_p3+_p4-_p1-_p2)/2.0f-_xl);
+
+  std::cerr << "xc: " << _xc.transpose() << std::endl;
+  std::cerr << "xl: " << _xl.transpose() << std::endl;
+
+  _vdOrig[RIGHT] = vdc+vdl/2.0f;
+  _vdOrig[LEFT] = vdc-vdl/2.0f;
+
+  for(int k = 0; k < NB_ROBOTS; k++)
+  {
+    if(_vdOrig[k].norm()>0.3f)
+    {
+      _vdOrig[k] *= 0.3f/_vdOrig[k].norm();
+    }
+
+    _vd[k] = _vdOrig[k];
+  }
+  std::cerr << "vdr: " << _vd[RIGHT].transpose() << std::endl;
+  std::cerr << "vdl: " << _vd[LEFT].transpose() << std::endl;
 
 }
 
@@ -483,45 +530,63 @@ void ObjectGrabbing::forceModulation()
 
 void ObjectGrabbing::computeDesiredOrientation()
 {
-  // // Compute rotation error between current orientation and plane orientation using Rodrigues' law
-  // Eigen::Vector3f k;
-  // k = (-_wRb.col(2)).cross(_planeNormal);
-  // float c = (-_wRb.col(2)).transpose()*_planeNormal;  
-  // float s = k.norm();
-  // k /= s;
-  
-  // Eigen::Matrix3f K;
-  // K << getSkewSymmetricMatrix(k);
 
-  // Eigen::Matrix3f Re;
-  // if(fabs(s)< FLT_EPSILON)
-  // {
-  //   Re = Eigen::Matrix3f::Identity();
-  // }
-  // else
-  // {
-  //   Re = Eigen::Matrix3f::Identity()+s*K+(1-c)*K*K;
-  // }
-  
-  // // Convert rotation error into axis angle representation
-  // Eigen::Vector3f omega;
-  // float angle;
-  // Eigen::Vector4f qtemp = rotationMatrixToQuaternion(Re);
-  // quaternionToAxisAngle(qtemp,omega,angle);
+  for(int k = 0; k < NB_ROBOTS; k++)
+  {
+    Eigen::Vector3f ref;
+    if(k == (int) RIGHT)
+    {
+      ref = (_p1+_p2-_p3-_p4)/2.0f;
+    }
+    else
+    {
+      ref = (_p3+_p4-_p1-_p2)/2.0f;
+    }
+      
+    ref.normalize();
+    // Compute rotation error between current orientation and plane orientation using Rodrigues' law
+    Eigen::Vector3f u;
+    u = (_wRb[k].col(2)).cross(ref);
+    float c = (_wRb[k].col(2)).transpose()*ref;  
+    float s = u.norm();
+    u /= s;
+    
+    Eigen::Matrix3f K;
+    K << getSkewSymmetricMatrix(u);
 
-  // // Compute final quaternion on plane
-  // Eigen::Vector4f qf = quaternionProduct(qtemp,_q);
+    Eigen::Matrix3f Re;
+    if(fabs(s)< FLT_EPSILON)
+    {
+      Re = Eigen::Matrix3f::Identity();
+    }
+    else
+    {
+      Re = Eigen::Matrix3f::Identity()+s*K+(1-c)*K*K;
+    }
+    
+    // Convert rotation error into axis angle representation
+    Eigen::Vector3f omega;
+    float angle;
+    Eigen::Vector4f qtemp = rotationMatrixToQuaternion(Re);
+    quaternionToAxisAngle(qtemp,omega,angle);
 
-  // // Perform quaternion slerp interpolation to progressively orient the end effector while approaching the plane
-  // _qd = slerpQuaternion(_q,qf,1.0f-std::tanh(5.0f*_normalDistance));
+    // Compute final quaternion on plane
+    Eigen::Vector4f qf = quaternionProduct(qtemp,_q[k]);
 
-  // // Compute needed angular velocity to perform the desired quaternion
-  // Eigen::Vector4f qcurI, wq;
-  // qcurI(0) = _q(0);
-  // qcurI.segment(1,3) = -_q.segment(1,3);
-  // wq = 5.0f*quaternionProduct(qcurI,_qd-_q);
-  // Eigen::Vector3f omegaTemp = _wRb*wq.segment(1,3);
-  // _omegad = omegaTemp; 
+    float distance = ((_p3+_p4-_p1-_p2)/2.0f-_xl).norm();
+    // Perform quaternion slerp interpolation to progressively orient the end effector while approaching the plane
+    _qd[k] = slerpQuaternion(_q[k],qf,1.0f-std::tanh(5.0f*distance));
+
+    // Compute needed angular velocity to perform the desired quaternion
+    Eigen::Vector4f qcurI, wq;
+    qcurI(0) = _q[k](0);
+    qcurI.segment(1,3) = -_q[k].segment(1,3);
+    wq = 5.0f*quaternionProduct(qcurI,_qd[k]-_q[k]);
+    Eigen::Vector3f omegaTemp = _wRb[k]*wq.segment(1,3);
+    _omegad[k] = omegaTemp; 
+  std::cerr << distance << std::endl;
+  }
+
 
 }
 
@@ -533,7 +598,7 @@ void ObjectGrabbing::logData()
 
 void ObjectGrabbing::publishData()
 {
-  for(int k = 0; k < 2; k++)
+  for(int k = 0; k < NB_ROBOTS; k++)
   {
     // Publish desired twist (passive ds controller)
     _msgDesiredTwist.linear.x  = _vd[k](0);
@@ -565,7 +630,6 @@ void ObjectGrabbing::publishData()
     _msgFilteredWrench.wrench.torque.z = _filteredWrench[k](5);
     _pubFilteredWrench[k].publish(_msgFilteredWrench);
 
-
     _msgDesiredWrench.force.x = _Fc[k](0);
     _msgDesiredWrench.force.y = _Fc[k](1);
     _msgDesiredWrench.force.z = _Fc[k](2);
@@ -579,6 +643,7 @@ void ObjectGrabbing::publishData()
     _pubNormalForce[k].publish(msg);
     
   }
+
   // _msgTaskAttractor.header.frame_id = "world";
   // _msgTaskAttractor.header.stamp = ros::Time::now();
   // _msgTaskAttractor.point.x = _taskAttractor(0);
@@ -620,7 +685,7 @@ void ObjectGrabbing::publishData()
   // _msgMarker.pose.orientation.w = q(0);
 
 
-  // _pubMarker.publish(_msgMarker);
+  _pubMarker.publish(_msgMarker);
 
   // _msgArrowMarker.points.clear();
   // geometry_msgs::Point p1, p2;
@@ -646,6 +711,11 @@ void ObjectGrabbing::updateRobotPose(const geometry_msgs::Pose::ConstPtr& msg, i
   _q[k] << msg->orientation.w, msg->orientation.x, msg->orientation.y, msg->orientation.z;
   _wRb[k] = quaternionToRotationMatrix(_q[k]);
   _x[k] = _x[k]+_toolOffset*_wRb[k].col(2);
+
+  if(k==(int)LEFT)
+  {
+    _x[k] += _leftRobotOrigin;
+  }
 
   if(!_firstRobotPose[k])
   {
@@ -765,6 +835,7 @@ void ObjectGrabbing::optitrackInitialization()
     else if(_averageCount == AVERAGE_COUNT)
     {
       ROS_INFO("Optitrack Initialization done !");
+      _leftRobotOrigin = _markersPosition0.col(ROBOT_BASIS_LEFT)-_markersPosition0.col(ROBOT_BASIS_RIGHT);
     }
   }
   else
@@ -811,7 +882,6 @@ Eigen::Vector4f ObjectGrabbing::rotationMatrixToQuaternion(Eigen::Matrix3f R)
   float r31 = R(2,0);
   float r32 = R(2,1);
   float r33 = R(2,2);
-
 
   float tr = r11+r22+r33;
   float tr1 = r11-r22-r33;
