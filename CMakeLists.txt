@@ -16,6 +16,8 @@ find_package(catkin REQUIRED COMPONENTS
   dynamic_reconfigure
   foot_interfaces
   svm_grad
+  sg_differentiation
+
 )
 
 # add_message_files(
@@ -38,7 +40,8 @@ generate_dynamic_reconfigure_options(cfg/unifiedMotionForceController_params.cfg
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES ${PROJECT_NAME} passive_ds_force_controller
-  CATKIN_DEPENDS roscpp rospy std_msgs message_generation kdl_parser dynamic_reconfigure foot_interfaces svm_grad
+  CATKIN_DEPENDS roscpp rospy std_msgs message_generation kdl_parser dynamic_reconfigure foot_interfaces svm_grad sg_differentiation
+
   # DEPENDS Eigen
  )
 

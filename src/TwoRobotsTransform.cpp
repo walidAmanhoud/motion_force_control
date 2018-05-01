@@ -57,9 +57,8 @@ bool TwoRobotsTransform::init() //! Initialization of the node. Its datatype (bo
 	
 	if (_n.ok()) 
 	{ 
-   
 		ros::spinOnce();
-		ROS_INFO("The actor_world broadcast is about to start");
+		ROS_INFO("The TwoRobotsTransform is about to start");
 		return true;
 	}
 	else 

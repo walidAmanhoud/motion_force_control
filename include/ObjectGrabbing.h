@@ -26,6 +26,8 @@
 #include "geometry_msgs/Wrench.h"
 #include "geometry_msgs/Twist.h"
 #include "std_msgs/Float32MultiArray.h"
+#include "sg_filter.h"
+
 
 #define NB_SAMPLES 50
 #define AVERAGE_COUNT 100
@@ -103,11 +105,14 @@ class ObjectGrabbing
 		float _targetForce;
 		float _targetVelocity;
 		float _velocityLimit;
-		Eigen::Vector3f _xc;
-		Eigen::Vector3f _xl;
+    Eigen::Vector3f _xC;
+    Eigen::Vector3f _xL;
+    Eigen::Vector3f _xdC;
+    Eigen::Vector3f _xdC0;
+    Eigen::Vector3f _xdL;
+    float _distance;
 
 		// Task variables
-    Eigen::Vector3f _xo;
     Eigen::Vector3f _objectDim;
     Eigen::Vector3f _contactAttractor;
     Eigen::Vector3f _taskAttractor;
@@ -133,7 +138,8 @@ class ObjectGrabbing
 		bool _firstRobotPose[NB_ROBOTS];	// Monitor the first robot pose update
 		bool _firstRobotTwist[NB_ROBOTS];	// Monitor the first robot pose update
 		bool _firstWrenchReceived[NB_ROBOTS];
-		bool _firstOptitrackPose[TOTAL_NB_MARKERS];
+    bool _firstOptitrackPose[TOTAL_NB_MARKERS];
+    bool _firstObjectGrabbing;
 		bool _firstDampingMatrix;
 		bool _optitrackOK;
 		bool _wrenchBiasOK[NB_ROBOTS];
@@ -160,6 +166,11 @@ class ObjectGrabbing
 		static ObjectGrabbing* me;
 		std::mutex _mutex;
 
+    Eigen::Vector3f omegaPrev[NB_ROBOTS];
+    float anglePrev[NB_ROBOTS];
+    Eigen::Vector4f qdPrev[NB_ROBOTS];
+    Eigen::Vector4f qfPrev[NB_ROBOTS];
+
 		// Dynamic reconfigure (server+callback)
 		// dynamic_reconfigure::Server<motion_force_control::modulatedDS_paramsConfig> _dynRecServer;
 		// dynamic_reconfigure::Server<motion_force_control::modulatedDS_paramsConfig>::CallbackType _dynRecCallback;
@@ -169,6 +180,11 @@ class ObjectGrabbing
 
 		// Tank parameters
 		Eigen::Matrix3f _D;
+
+    SGF::SavitzkyGolayFilter _xCFilter;
+    SGF::SavitzkyGolayFilter _xLFilter;
+
+
 		// float _s;
 		// float _smax;
 		// float _alpha;
@@ -190,6 +206,8 @@ class ObjectGrabbing
 	private:
 		
 		static void stopNode(int sig);
+
+    void computeObjectPose();
 		
     void computeCommand();
 
