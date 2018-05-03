@@ -61,7 +61,8 @@ ObjectGrabbing::ObjectGrabbing(ros::NodeHandle &n, double frequency, ContactDyna
 
   _leftRobotOrigin << 0.078f, 0.9f, 0.0f;
   _objectDim << 0.31f, 0.21f, 0.21f;
-  _xdC << -0.3f, _leftRobotOrigin(1)/2.0f, _objectDim(2)/2.0f;
+  _xoC << -0.3f, _leftRobotOrigin(1)/2.0f, _objectDim(2)/2.0f;
+  _xdC = _xoC;;
 
   Eigen::Vector3f x, y, z;
   x << 1.0f, 0.0f, 0.0f;
@@ -71,16 +72,17 @@ ObjectGrabbing::ObjectGrabbing(ros::NodeHandle &n, double frequency, ContactDyna
   _p2 = _xdC+_objectDim(0)/2.0f*x+_objectDim(1)/2.0f*y+_objectDim(2)/2.0f*z;
   _p3 = _xdC+_objectDim(0)/2.0f*x-_objectDim(1)/2.0f*y+_objectDim(2)/2.0f*z;
   _p4 = _xdC-_objectDim(0)/2.0f*x-_objectDim(1)/2.0f*y+_objectDim(2)/2.0f*z;
-  _xdL = (_p3+_p4-_p1-_p2)/2.0f;
+  _xoL = (_p3+_p4-_p1-_p2)/2.0f;
+  _xdL = _xoL;
 
-  _taskAttractor << -0.6f, 0.5f, 0.75f;
+  _taskAttractor << -0.6f, 0.5f, 0.7f;
   _contactAttractor << -0.6f, 0.2f, 0.186f;
   _p << 0.0f,0.0f,0.19f;
 
 
 
   _stop = false;
-
+  _firstObjectPose = false;
 
   _averageCount = 0;
 
@@ -254,10 +256,13 @@ void ObjectGrabbing::run()
       {
         computeObjectPose();
         // Compute control command
-        computeCommand();
+        if(_firstObjectPose)
+        {
+          computeCommand();
 
+        }
         // Publish data to topics
-        publishData();
+        publishData();          
 
         // Log data
         // logData();
@@ -300,6 +305,11 @@ void ObjectGrabbing::computeObjectPose()
 {
   if(_markersTracked.segment(NB_ROBOTS,TOTAL_NB_MARKERS-NB_ROBOTS).sum() == TOTAL_NB_MARKERS-NB_ROBOTS)
   {
+
+    if(!_firstObjectPose)
+    {
+      _firstObjectPose = true;
+    }
     _p1 = _markersPosition.col(P1)-_markersPosition0.col(ROBOT_BASIS_RIGHT);
     _p2 = _markersPosition.col(P2)-_markersPosition0.col(ROBOT_BASIS_RIGHT);
     _p3 = _markersPosition.col(P3)-_markersPosition0.col(ROBOT_BASIS_RIGHT);
@@ -313,50 +323,26 @@ void ObjectGrabbing::computeObjectPose()
     // Filter center position of object
     _xCFilter.AddData((_p1+_p2+_p3+_p4)/4.0f);
     _xCFilter.GetOutput(0,temp);
-    _xdC = temp;
+    _xoC = temp;
     Eigen::Vector3f xDir = _p2-_p1;
     xDir.normalize();
     Eigen::Vector3f yDir = _p1-_p4;
     yDir.normalize();
     Eigen::Vector3f zDir = xDir.cross(yDir);
     zDir.normalize();
-    _xdC -= (_objectDim(2)/2.0f)*zDir;
+    _xoC -= (_objectDim(2)/2.0f)*zDir;
       
     // Filter object direction
     _xLFilter.AddData((_p3+_p4-_p1-_p2)/2.0f);
     _xLFilter.GetOutput(0,temp);
-    _xdL = temp;
-
-    // Compute robots center + distance;
-    _xC = (_x[LEFT]+_x[RIGHT])/2.0f;
-    _xL = (_x[RIGHT]-_x[LEFT]);
-
-    // If robots grabbed object, adapt center attractor to be the current robot's center
-    // => kill the center dynamics 
-    if(_normalForce[LEFT]>_grabbingForceThreshold && _normalForce[RIGHT]>_grabbingForceThreshold)
-    {
-      if(_objectGrabbed == false)
-      {
-        ROS_INFO("Object grabbed");
-      }
-      _objectGrabbed = true;
-      _xdC = _xC;
-    }
-    else
-    {
-      _objectGrabbed = false;
-    }
-
-    _distance = (_xL-_xdL).dot(_xdL.normalized());
-    if(_distance<0.0f)
-    {
-      _distance = 0.0f;
-    }
+    _xoL = temp;
+    // std::cerr <<"real" << _xdL.norm() << " " <<_xdL.transpose() << std::endl;
+    // std::cerr << "filter" <<  _xoL.norm() << " " <<_xoL.transpose() << std::endl;
 
     // Update marker object position and orientation
-    _msgMarker.pose.position.x = _xdC(0);
-    _msgMarker.pose.position.y = _xdC(1);
-    _msgMarker.pose.position.z = _xdC(2);
+    _msgMarker.pose.position.x = _xoC(0);
+    _msgMarker.pose.position.y = _xoC(1);
+    _msgMarker.pose.position.z = _xoC(2);
     Eigen::Matrix3f R;
     R.col(0) = xDir;
     R.col(1) = yDir;
@@ -368,7 +354,7 @@ void ObjectGrabbing::computeObjectPose()
     _msgMarker.pose.orientation.w = q(0);
   }
 
-  std::cerr << "eC: " << _distance << " eL: " <<  (_xdC-_xC).norm() << std::endl;
+  std::cerr << "eL: " << _distance << " eC: " <<  (_xoC-_xC).norm() << std::endl;
 }
 
 
@@ -396,6 +382,41 @@ void ObjectGrabbing::computeProjectionOnSurface()
 
 void ObjectGrabbing::computeOriginalDynamics()
 {
+
+  // Compute robots center + distance;
+  _xC = (_x[LEFT]+_x[RIGHT])/2.0f;
+  _xL = (_x[RIGHT]-_x[LEFT]);
+
+  // If robots grabbed object, adapt center attractor to be the current robot's center
+  // => kill the center dynamics 
+  _distance = (_xL-_xoL).dot(_xoL.normalized());
+  // std::cerr << _distance << " " << _xL.transpose() << std::endl;
+  float alpha = smoothFall(_distance,0.05f,0.15f);
+
+  std::cerr << alpha << std::endl;
+  // Check if object is grasped
+  if(_normalForce[LEFT]*alpha>_grabbingForceThreshold && _normalForce[RIGHT]*alpha>_grabbingForceThreshold)
+  {
+    if(_objectGrabbed == false)
+    {
+      ROS_INFO("Object grabbed");
+    }
+    _objectGrabbed = true;
+    _xdC = _xC;
+  }
+  else
+  {
+    _objectGrabbed = false;
+    _xdC = _xoC;
+  }
+
+  if(_distance<0.0f)
+  {
+    _distance = 0.0f;
+  }
+
+
+
   // Compute coupled robots'center and distance dynamics 
 
   Eigen::Vector3f vdC, vdL;
@@ -406,11 +427,17 @@ void ObjectGrabbing::computeOriginalDynamics()
   }
   else if(_contactDynamics == LINEAR)
   {
-    vdC = (_taskAttractor-_xC);
     if(_objectGrabbed)
     {
+      vdC = (_taskAttractor-_xC);
+      // vdC = getCyclingMotionVelocity(_xC, _taskAttractor);
       _xdL << 0.0f,-1.0f,0.0f;
       _xdL *= 0.19f;
+      // _xdL = _xL;
+    }
+    else
+    {
+      vdC = 2.0f*(_xdC-_xC);
     }
   }
 
@@ -422,9 +449,9 @@ void ObjectGrabbing::computeOriginalDynamics()
 
   // Get robot dynamics + adjust z dynamics to make them at the same height
   _vdOrig[RIGHT] = vdC+vdL/2.0f;
-  _vdOrig[RIGHT](2) += -3.0f*(_x[RIGHT](2)-_x[LEFT](2));
+  _vdOrig[RIGHT](2) += -2.0f*(_x[RIGHT](2)-_x[LEFT](2));
   _vdOrig[LEFT] = vdC-vdL/2.0f;
-  _vdOrig[LEFT](2) += -3.0f*(_x[LEFT](2)-_x[RIGHT](2));
+  _vdOrig[LEFT](2) += -2.0f*(_x[LEFT](2)-_x[RIGHT](2));
 
   for(int k = 0; k < NB_ROBOTS; k++)
   {
@@ -450,6 +477,26 @@ void ObjectGrabbing::rotatingDynamics()
 void ObjectGrabbing::updateTankScalars()
 {
 
+}
+
+Eigen::Vector3f ObjectGrabbing::getCyclingMotionVelocity(Eigen::Vector3f position, Eigen::Vector3f attractor)
+{
+  Eigen::Vector3f velocity;
+
+  position = position-attractor;
+
+  velocity(2) = -position(2);
+
+  float R = sqrt(position(0) * position(0) + position(1) * position(1));
+  float T = atan2(position(1), position(0));
+
+  float r = 0.15f;
+  float omega = M_PI;
+
+  velocity(0) = -(R-r) * cos(T) - R * omega * sin(T);
+  velocity(1) = -(R-r) * sin(T) + R * omega * cos(T);
+
+  return velocity;
 }
 
 
@@ -494,6 +541,7 @@ void ObjectGrabbing::forceModulation()
 
     // Compute force profile
 
+    // std::cerr << smoothFall(_distance,0.02f,0.1f) << std::endl;
     if(_objectGrabbed)
     {
       _Fd[k] = _targetForce/_lambda1[k];
@@ -501,8 +549,8 @@ void ObjectGrabbing::forceModulation()
     }
     else
     {
-      _Fd[k] = _targetForce*(1.0f-std::tanh(10.0f*_distance))*(1.0f-std::tanh(10.0f*(_xdC-_xC).norm()))/_lambda1[k];    
-      // _Fd[k] = 6.0f/_lambda1[k];    
+      // _Fd[k] = _targetForce*(1.0f-std::tanh(10.0f*_distance))*(1.0f-std::tanh(10.0f*(_xdC-_xC).norm()))/_lambda1[k];    
+      _Fd[k] = 6.0f/_lambda1[k];    
     }
     if(_lambda1[k]<1.0f)
     {
@@ -561,8 +609,8 @@ void ObjectGrabbing::forceModulation()
 
     // std::cerr <<"Measured force: " << (-_wRb*_filteredWrench.segment(0,3)).dot(_e1) << " Fd:  " << _Fd*_lambda1 << " vdR: " << _vdR.norm() << std::endl;
     // std::cerr << "delta: " << delta << " la: " << la << " lb: " << lb << " vd: " << _vd.norm() << std::endl;
-    std::cerr << k << ": " << _Fd[k]*_lambda1[k] << " " <<_e1[k].transpose() << std::endl;
-    std::cerr << k << ": " << _vd[k].transpose() << std::endl;
+    // std::cerr << k << ": " << _Fd[k]*_lambda1[k] << " " <<_e1[k].transpose() << std::endl;
+    // std::cerr << k << ": " << _vd[k].transpose() << std::endl;
     // Bound desired velocity  
     if(_vd[k].norm()>_velocityLimit)
     {

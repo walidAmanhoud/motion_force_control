@@ -108,9 +108,11 @@ class ObjectGrabbing
 		float _velocityLimit;
     Eigen::Vector3f _xC;
     Eigen::Vector3f _xL;
+    Eigen::Vector3f _xoC;
+    Eigen::Vector3f _xoL;
     Eigen::Vector3f _xdC;
-    Eigen::Vector3f _xdC0;
     Eigen::Vector3f _xdL;
+    Eigen::Vector3f _xdC0;
     float _distance;
 
 		// Task variables
@@ -147,6 +149,7 @@ class ObjectGrabbing
     bool _moveToAttractor;
 		bool _stop;
     bool _objectGrabbed;
+    bool _firstObjectPose;
 
     // Optitrack 
     Eigen::Matrix<float,3,TOTAL_NB_MARKERS> _markersPosition;
@@ -218,6 +221,8 @@ class ObjectGrabbing
     void computeCommand();
 
 		void computeProjectionOnSurface();
+
+    Eigen::Vector3f getCyclingMotionVelocity(Eigen::Vector3f position, Eigen::Vector3f attractor);
 
 		void computeOriginalDynamics();
 
