@@ -15,7 +15,7 @@
 
 #include <dynamic_reconfigure/server.h>
 
-#include "motion_force_control/modulatedDS_paramsConfig.h"
+#include "motion_force_control/objectGrabbing_paramsConfig.h"
 
 #include "geometry_msgs/PointStamped.h"
 #include "nav_msgs/Path.h"
@@ -39,6 +39,7 @@ class ObjectGrabbing
 
 	public:
 
+    enum ContactDynamics {NONE = 0, LINEAR = 1};
 		enum ROBOT {LEFT = 0, RIGHT = 1};
   	enum MarkersID {ROBOT_BASIS_LEFT = 0, ROBOT_BASIS_RIGHT = 1, P1 = 2, P2 = 3, P3 = 4, P4 = 5};
 
@@ -131,6 +132,7 @@ class ObjectGrabbing
 
 		// Control variables
     float _convergenceRate;       // Convergence rate of the DS
+    float _grabbingForceThreshold;       // Convergence rate of the DS
 		Eigen::Vector3f _Fc[NB_ROBOTS];
 		Eigen::Vector3f _Tc[NB_ROBOTS];
 		
@@ -139,11 +141,12 @@ class ObjectGrabbing
 		bool _firstRobotTwist[NB_ROBOTS];	// Monitor the first robot pose update
 		bool _firstWrenchReceived[NB_ROBOTS];
     bool _firstOptitrackPose[TOTAL_NB_MARKERS];
-    bool _firstObjectGrabbing;
 		bool _firstDampingMatrix;
 		bool _optitrackOK;
 		bool _wrenchBiasOK[NB_ROBOTS];
+    bool _moveToAttractor;
 		bool _stop;
+    bool _objectGrabbed;
 
     // Optitrack 
     Eigen::Matrix<float,3,TOTAL_NB_MARKERS> _markersPosition;
@@ -157,7 +160,7 @@ class ObjectGrabbing
 		Eigen::Vector3f _leftRobotOrigin;
 
 		// Eigen value of passive ds controller
-		float _lambda1;
+		float _lambda1[NB_ROBOTS];
 
 		// Other variables
 		uint32_t _sequenceID;
@@ -172,8 +175,8 @@ class ObjectGrabbing
     Eigen::Vector4f qfPrev[NB_ROBOTS];
 
 		// Dynamic reconfigure (server+callback)
-		// dynamic_reconfigure::Server<motion_force_control::modulatedDS_paramsConfig> _dynRecServer;
-		// dynamic_reconfigure::Server<motion_force_control::modulatedDS_paramsConfig>::CallbackType _dynRecCallback;
+		dynamic_reconfigure::Server<motion_force_control::objectGrabbing_paramsConfig> _dynRecServer;
+		dynamic_reconfigure::Server<motion_force_control::objectGrabbing_paramsConfig>::CallbackType _dynRecCallback;
 
 		std::ifstream _inputFile;
 		std::ofstream _outputFile;
@@ -186,6 +189,7 @@ class ObjectGrabbing
     SGF::SavitzkyGolayFilter _qdLFilter;
     SGF::SavitzkyGolayFilter _qdRFilter;
 
+    ContactDynamics _contactDynamics;
 
 		// float _s;
 		// float _smax;
@@ -199,7 +203,7 @@ class ObjectGrabbing
 	public:
 
 		// Class constructor
-		ObjectGrabbing(ros::NodeHandle &n, double frequency, float targetVelocity, float targetForce);
+		ObjectGrabbing(ros::NodeHandle &n, double frequency, ContactDynamics contactDynamics, float targetVelocity, float targetForce);
 
 		bool init();
 
@@ -255,7 +259,7 @@ class ObjectGrabbing
 
   	Eigen::Vector4f slerpQuaternion(Eigen::Vector4f q1, Eigen::Vector4f q2, float t);
 
-    void dynamicReconfigureCallback(motion_force_control::modulatedDS_paramsConfig &config, uint32_t level);
+    void dynamicReconfigureCallback(motion_force_control::objectGrabbing_paramsConfig &config, uint32_t level);
 
     float smoothRise(float x, float a, float b);
 

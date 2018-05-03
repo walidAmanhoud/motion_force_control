@@ -35,7 +35,8 @@ generate_messages(DEPENDENCIES std_msgs)
 generate_dynamic_reconfigure_options(cfg/unifiedMotionForceController_params.cfg 
                                      cfg/motionController_params.cfg
                                      cfg/forceTaskSharedControl_params.cfg
-                                     cfg/modulatedDS_params.cfg)
+                                     cfg/modulatedDS_params.cfg
+                                     cfg/objectGrabbing_params.cfg)
 
 catkin_package(
   INCLUDE_DIRS include
