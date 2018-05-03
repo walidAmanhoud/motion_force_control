@@ -9,7 +9,9 @@ ObjectGrabbing::ObjectGrabbing(ros::NodeHandle &n, double frequency, float targe
   _targetVelocity(targetVelocity),
   _targetForce(targetForce),
   _xCFilter(3,3,16,1.0f/frequency),
-  _xLFilter(3,3,16,1.0f/frequency)
+  _xLFilter(3,3,16,1.0f/frequency),
+  _qdLFilter(4,3,16,1.0f/frequency),
+  _qdRFilter(4,3,16,1.0f/frequency)
 {
   me = this;
 
@@ -68,7 +70,7 @@ ObjectGrabbing::ObjectGrabbing(ros::NodeHandle &n, double frequency, float targe
   _p4 = _xdC-_objectDim(0)/2.0f*x-_objectDim(1)/2.0f*y+_objectDim(2)/2.0f*z;
   _xdL = (_p3+_p4-_p1-_p2)/2.0f;
 
-  _taskAttractor << -0.6f, -0.2f, 0.186f;
+  _taskAttractor << -0.6f, 0.5f, 0.75f;
   _contactAttractor << -0.6f, 0.2f, 0.186f;
   _p << 0.0f,0.0f,0.19f;
 
@@ -87,6 +89,8 @@ ObjectGrabbing::ObjectGrabbing(ros::NodeHandle &n, double frequency, float targe
   _lambda1 = 0.0f;
 
   _distance = 0.0f;
+
+  _sequenceID = 0;
 
   // _firstDampingMatrix = false;
   // _D.setConstant(0.0f);
@@ -354,9 +358,21 @@ void ObjectGrabbing::computeObjectPose()
 
     SGF::Vec temp(3);
     Eigen::Vector3f bou;
+
     _xCFilter.AddData((_p1+_p2+_p3+_p4)/4.0f);
     _xCFilter.GetOutput(0,temp);
-    _xdC = temp;
+
+    // if(_Fd[LEFT]*_lambda1> 5.0f && _Fd[RIGHT]*_lambda1>5.0f)
+    // {
+    //   _xdC = _xC;
+    //   std::cerr << "bou" << std::endl;
+    // }
+    // else
+    // {
+      _xdC = temp;
+      
+    // }
+
     // std::cerr << "c: " <<_xdC.transpose() << std::endl;
     // std::cerr << "c: " << bou.transpose() << std::endl;
     _xLFilter.AddData((_p3+_p4-_p1-_p2)/2.0f);
@@ -384,14 +400,20 @@ void ObjectGrabbing::computeObjectPose()
     zDir.normalize();
 
     static bool _first = false;
-    if(!_first)
-    {
-      _xdC0 = _xdC;
-      _xdC0(2) += 0.2f;
-      _first = true;
-    }
 
     _xdC -= (_objectDim(2)/2.0f)*zDir;
+
+    if(_normalForce[LEFT]>3.0f && _normalForce[RIGHT]>3.0f)
+    {
+      _xdC = _xC;
+      if(!_first)
+      {
+        _xdC0 = _xC;
+        _xdC0(2) += 0.2f;
+        _first = true;
+      }
+      std::cerr <<"bou"<< std::endl;
+    }
 
     _distance = (_xL-_xdL).dot(_xdL.normalized());
     if(_distance<0.0f)
@@ -411,7 +433,8 @@ void ObjectGrabbing::computeObjectPose()
   _msgMarker.pose.orientation.z = q(3);
   _msgMarker.pose.orientation.w = q(0);
   }
-    std::cerr << "Distance: " << _distance << " " <<  _xdL.transpose() << std::endl;
+    std::cerr << "Distance 2 robots: " << _distance << " " <<  _xdL.transpose() << std::endl;
+    std::cerr << "Distance center: " << (_xdC-_xC).norm() << std::endl;
 
 
 }
@@ -456,35 +479,82 @@ void ObjectGrabbing::computeOriginalDynamics()
   // }
 
   // alpha = sqrt(temp);
-  if(alpha>1)
-  {
-    alpha = 1.0f;
-  }
+  // if(alpha>1)
+  // {
+  //   alpha = 1.0f;
+  // }
 
-  std::cerr << alpha << std::endl;
+  // std::cerr << alpha << std::endl;
 
-  if(_normalForce[LEFT]>5.0f && _normalForce[RIGHT]>5.0f)
-  {
-    vdc = 3.0f*(_xdC0-_xC);
-  }
-  else
-  {
-    vdc = 3.0f*(_xdC-_xC); 
-  }
-  // std::cerr << _normalForce[LEFT] << " " << _normalForce[RIGHT] << std::endl;
+  // if(_normalForce[LEFT]>5.0f && _normalForce[RIGHT]>5.0f)
+  // {
+  //   vdc = 3.0f*(_xdC0-_xC);
+  // }
+  // else
+  // {
+  //   vdc = 3.0f*(_xdC-_xC); 
+  // }
+  // // std::cerr << _normalForce[LEFT] << " " << _normalForce[RIGHT] << std::endl;
 
-  vdc = 3.0f*((1-alpha)*(_xdC-_xC)+alpha*(_xdC0-_xC));
   // vdc = 3.0f*((1-alpha)*(_xdC-_xC)+alpha*(_xdC0-_xC));
-  // vdc = 2.0f*(_xdC-_xC);
-  vdl = 3.0f*(_xdL-_xL);
+  // // vdc = 3.0f*((1-alpha)*(_xdC-_xC)+alpha*(_xdC0-_xC));
+  // // vdc = 2.0f*(_xdC-_xC);
+  // vdl = 3.0f*(_xdL-_xL);
+
+    if(_normalForce[LEFT]>4.0f && _normalForce[RIGHT]>4.0f)
+    {
+      // vdc = (_xdC0-_xC);
+      vdc = (_taskAttractor-_xC);
+      // vdc = (_xdC-_xC);
+      _xdL << 0.0f,-1.0f,0.0f;
+      _xdL*=0.19f;
+
+    }
+    else
+    {
+      vdc = (_xdC-_xC);
+      
+    }
+      vdl = 3.0f*(1-std::tanh(10.0f*(_xdC-_xC).norm()))*(_xdL-_xL);
+
+    // {
+    // //   vdc = (_xdC-_xC);
+    //   std::cerr <<"bou" << std::endl;
+    //   vdc = (_xdC-_xC).dot(_xdL.normalized())*_xdL.normalized();
+    //   vdl = 3.0f*(1-std::tanh(10.0f*(_xdC-_xC).norm()))*(_xdL-_xL).dot(_xdL.normalized())*_xdL.normalized();
+
+
+    // }
+    // else
+    // {
+    //   vdc = (_xdC-_xC);
+    //   vdl = 3.0f*(1-std::tanh(10.0f*(_xdC-_xC).norm()))*(_xdL-_xL);
+    // //   vdc = (_xdC-_xC).dot(_xdL.normalized())*_xdL.normalized();
+    // }
+
+    // vdl = 3.0f*(1-std::tanh(10.0f*(_xdC-_xC).norm()))*(_xdL-_xL);
+    // vdl = 3.0f*(1-std::tanh(10.0f*(_xdC-_xC).norm()))*(_xdL-_xL.dot(_xdL.normalized())*_xdL.normalized());
+    // std::cerr << vdc.transpose() << std::endl;
+
+    // vdl(2) = 0.0f;
+
 
   // std::cerr << "xc: " << _xC.transpose() << std::endl;
   // std::cerr << "xl: " << _xL.transpose() << std::endl;
 
   _vdOrig[RIGHT] = vdc+vdl/2.0f;
-  // _vdOrig[RIGHT](2) += -3.0f*(_x[RIGHT](2)-_x[LEFT](2));
+  _vdOrig[RIGHT](2) += -3.0f*(_x[RIGHT](2)-_x[LEFT](2));
   _vdOrig[LEFT] = vdc-vdl/2.0f;
-  // _vdOrig[LEFT](2) += -3.0f*(_x[LEFT](2)-_x[RIGHT](2));
+  _vdOrig[LEFT](2) += -3.0f*(_x[LEFT](2)-_x[RIGHT](2));
+
+
+  // for(int k = 0; k < NB_ROBOTS; k++)
+  // {
+  //   if(_normalForce[LEFT]>3.0f && _normalForce[RIGHT]>3.0f)
+  //   {
+  //     _vdOrig[k] = _vdOrig[k].dot(_xdL.normalized())*_xdL.normalized();
+  //   }
+  // }
 
   for(int k = 0; k < NB_ROBOTS; k++)
   {
@@ -553,7 +623,18 @@ void ObjectGrabbing::forceModulation()
     B.col(2) = _e3[k];
 
     // Compute force profile
-    _Fd[k] = _targetForce*(1.0f-std::tanh(10.0f*_distance))*(1.0f-std::tanh(10.0f*(_xdC-_xC).norm()))/_lambda1;    
+
+    if(_normalForce[LEFT]>4.0f && _normalForce[RIGHT]>4.0f)
+    {
+      _Fd[k] = _targetForce/_lambda1;
+      // _Fd[k] = _targetForce*smoothFall(_distance,0.02f,0.1f)/_lambda1;
+
+    }
+    else
+    {
+      _Fd[k] = _targetForce*(1.0f-std::tanh(10.0f*_distance))*(1.0f-std::tanh(10.0f*(_xdC-_xC).norm()))/_lambda1;    
+      // _Fd[k] = 6.0f/_lambda1;    
+    }
     if(_lambda1<1.0f)
     {
       _lambda1 = 1.0f;
@@ -631,11 +712,11 @@ void ObjectGrabbing::computeDesiredOrientation()
     Eigen::Vector3f ref;
     if(k == (int) RIGHT)
     {
-      ref = (_p1+_p2-_p3-_p4)/2.0f;
+      ref = -_xdL.normalized();
     }
     else
     {
-      ref = (_p3+_p4-_p1-_p2)/2.0f;
+      ref = _xdL.normalized();
     }
       
     ref.normalize();
@@ -674,6 +755,21 @@ void ObjectGrabbing::computeDesiredOrientation()
 
     // Perform quaternion slerp interpolation to progressively orient the end effector while approaching the plane
     _qd[k] = slerpQuaternion(_q[k],qf,1.0f-std::tanh(3.0f*_distance));
+    SGF::Vec temp(4);
+    if(k == (int) LEFT)
+    {
+      _qdLFilter.AddData(slerpQuaternion(_q[k],qf,1.0f-std::tanh(3.0f*_distance)));
+      _qdLFilter.GetOutput(0,temp);
+      
+    }
+    else
+    {
+      _qdRFilter.AddData(slerpQuaternion(_q[k],qf,1.0f-std::tanh(3.0f*_distance)));
+      _qdRFilter.GetOutput(0,temp);
+    }
+    // _qd[k] = temp;
+    // _qd[k].normalize();
+
     // _qd[k] = slerpQuaternion(_q[k],qf,1.0f);
 
     if(_qd[k].dot(qdPrev[k])<0.0f)

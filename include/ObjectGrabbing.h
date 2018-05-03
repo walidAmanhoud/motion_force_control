@@ -183,6 +183,8 @@ class ObjectGrabbing
 
     SGF::SavitzkyGolayFilter _xCFilter;
     SGF::SavitzkyGolayFilter _xLFilter;
+    SGF::SavitzkyGolayFilter _qdLFilter;
+    SGF::SavitzkyGolayFilter _qdRFilter;
 
 
 		// float _s;
