@@ -194,6 +194,8 @@ class ObjectGrabbing
 
     ContactDynamics _contactDynamics;
 
+    Eigen::Vector3f _vdC;
+
 		// float _s;
 		// float _smax;
 		// float _alpha;

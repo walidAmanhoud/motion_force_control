@@ -98,6 +98,8 @@ ObjectGrabbing::ObjectGrabbing(ros::NodeHandle &n, double frequency, ContactDyna
   _distance = 0.0f;
 
   _sequenceID = 0;
+  _offset.setConstant(0.0f);
+  _vdC.setConstant(0.0f);
 
   // _firstDampingMatrix = false;
   // _D.setConstant(0.0f);
@@ -330,7 +332,7 @@ void ObjectGrabbing::computeObjectPose()
     yDir.normalize();
     Eigen::Vector3f zDir = xDir.cross(yDir);
     zDir.normalize();
-    _xoC -= (_objectDim(2)/2.0f)*zDir;
+    _xoC -= 0.8*(_objectDim(2)/2.0f)*zDir;
       
     // Filter object direction
     _xLFilter.AddData((_p3+_p4-_p1-_p2)/2.0f);
@@ -391,9 +393,9 @@ void ObjectGrabbing::computeOriginalDynamics()
   // => kill the center dynamics 
   _distance = (_xL-_xoL).dot(_xoL.normalized());
   // std::cerr << _distance << " " << _xL.transpose() << std::endl;
-  float alpha = smoothFall(_distance,0.05f,0.15f);
+  float alpha = smoothFall(_distance,0.02f,0.1f)*smoothFall((_xdC-_xC).norm(),0.1f,0.2f);
 
-  std::cerr << alpha << std::endl;
+  // std::cerr << alpha << std::endl;
   // Check if object is grasped
   if(_normalForce[LEFT]*alpha>_grabbingForceThreshold && _normalForce[RIGHT]*alpha>_grabbingForceThreshold)
   {
@@ -429,7 +431,7 @@ void ObjectGrabbing::computeOriginalDynamics()
   {
     if(_objectGrabbed)
     {
-      vdC = (_taskAttractor-_xC);
+      vdC = (_taskAttractor+_offset-_xC);
       // vdC = getCyclingMotionVelocity(_xC, _taskAttractor);
       _xdL << 0.0f,-1.0f,0.0f;
       _xdL *= 0.19f;
@@ -441,6 +443,9 @@ void ObjectGrabbing::computeOriginalDynamics()
     }
   }
 
+  _vdC = vdC;
+
+  // std::cerr << "vdC: " <<_vdC.transpose() << std::endl;
   vdL = 3.0f*(1-std::tanh(10.0f*(_xdC-_xC).norm()))*(_xdL-_xL);
 
   //   std::cerr <<"bou" << std::endl;
@@ -453,14 +458,14 @@ void ObjectGrabbing::computeOriginalDynamics()
   _vdOrig[LEFT] = vdC-vdL/2.0f;
   _vdOrig[LEFT](2) += -2.0f*(_x[LEFT](2)-_x[RIGHT](2));
 
-  for(int k = 0; k < NB_ROBOTS; k++)
-  {
-    if(_vdOrig[k].norm()>_velocityLimit)
-    {
-      _vdOrig[k] *= _velocityLimit/_vdOrig[k].norm();
-    }
-    _vd[k] = _vdOrig[k];
-  }
+  // for(int k = 0; k < NB_ROBOTS; k++)
+  // {
+  //   if(_vdOrig[k].norm()>_velocityLimit)
+  //   {
+  //     _vdOrig[k] *= _velocityLimit/_vdOrig[k].norm();
+  //   }
+  //   _vd[k] = _vdOrig[k];
+  // }
 
   // std::cerr << "vdr: " << _vd[RIGHT].transpose() << std::endl;
   // std::cerr << "vdl: " << _vd[LEFT].transpose() << std::endl;
@@ -469,8 +474,11 @@ void ObjectGrabbing::computeOriginalDynamics()
 
 void ObjectGrabbing::rotatingDynamics()
 {
-  _vdR[LEFT] = _vdOrig[LEFT];
-  _vdR[RIGHT] = _vdOrig[RIGHT];
+  // _vdR[LEFT] = _vdOrig[LEFT];
+  // _vdR[RIGHT] = _vdOrig[RIGHT];
+
+  _vdR[LEFT] = _vdOrig[LEFT]-_vdC;
+  _vdR[RIGHT] = _vdOrig[RIGHT]-_vdC;
 }
 
 
@@ -542,6 +550,8 @@ void ObjectGrabbing::forceModulation()
     // Compute force profile
 
     // std::cerr << smoothFall(_distance,0.02f,0.1f) << std::endl;
+    float alpha = smoothFall(_distance,0.02f,0.1f)*smoothFall((_xdC-_xC).norm(),0.1f,0.2f);
+
     if(_objectGrabbed)
     {
       _Fd[k] = _targetForce/_lambda1[k];
@@ -550,7 +560,7 @@ void ObjectGrabbing::forceModulation()
     else
     {
       // _Fd[k] = _targetForce*(1.0f-std::tanh(10.0f*_distance))*(1.0f-std::tanh(10.0f*(_xdC-_xC).norm()))/_lambda1[k];    
-      _Fd[k] = 6.0f/_lambda1[k];    
+      _Fd[k] = _targetForce*alpha/_lambda1[k];    
     }
     if(_lambda1[k]<1.0f)
     {
@@ -565,6 +575,10 @@ void ObjectGrabbing::forceModulation()
 
 
     temp = (_e1[k]+_e2[k]+_e3[k]).dot(_vdR[k]);
+
+    // std::cerr << "vdR: " << (_vdR[k]).transpose() << std::endl;
+    // std::cerr << "L part: " << (_vdR[k]-_vdC).transpose() << std::endl;
+
     if(fabs(temp)<FLT_EPSILON)
     {
       lb = 0.0f;
@@ -576,7 +590,7 @@ void ObjectGrabbing::forceModulation()
 
     delta = std::pow(2.0f*_e1[k].dot(_vdR[k])*lb*temp,2.0f)+4.0f*std::pow(_vdR[k].norm(),4.0f); 
 
-    if(delta < 0.0f)
+    if(delta < FLT_EPSILON)
     {
       delta = 0.0f;
       la = 0.0f;
@@ -606,11 +620,13 @@ void ObjectGrabbing::forceModulation()
     {
       _vd[k] = M*_vdR[k];
     }
+    _vd[k]+=_vdC;
 
     // std::cerr <<"Measured force: " << (-_wRb*_filteredWrench.segment(0,3)).dot(_e1) << " Fd:  " << _Fd*_lambda1 << " vdR: " << _vdR.norm() << std::endl;
-    // std::cerr << "delta: " << delta << " la: " << la << " lb: " << lb << " vd: " << _vd.norm() << std::endl;
+    // std::cerr << k <<" delta: " << delta << " la: " << la << " lb: " << lb << " vd: " << _vd[k].norm() << std::endl;
     // std::cerr << k << ": " << _Fd[k]*_lambda1[k] << " " <<_e1[k].transpose() << std::endl;
-    // std::cerr << k << ": " << _vd[k].transpose() << std::endl;
+    // std::cerr << k << ": " << _vdR[k].transpose() << " " << _vd[k].transpose() << std::endl;
+    // std::cerr << k << ": " << la*_vdR[k].transpose() << " " << temp*lb*_e1[k].transpose() << std::endl;
     // Bound desired velocity  
     if(_vd[k].norm()>_velocityLimit)
     {
@@ -1105,6 +1121,10 @@ void ObjectGrabbing::dynamicReconfigureCallback(motion_force_control::objectGrab
   _filteredForceGain = config.filteredForceGain;
   _velocityLimit = config.velocityLimit;
   _grabbingForceThreshold = config.grabbingForceThreshold;
+  _offset(0) = config.xOffset;
+  _offset(1) = config.yOffset;
+  _offset(2) = config.zOffset;
+
 }
 
 
