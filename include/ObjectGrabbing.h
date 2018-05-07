@@ -55,7 +55,7 @@ class ObjectGrabbing
 		ros::Subscriber _subRobotTwist[NB_ROBOTS];						// Subscribe to robot current pose
 		ros::Subscriber _subForceTorqueSensor[NB_ROBOTS];				// Subscribe to robot current pose
 		ros::Subscriber _subOptitrackPose[TOTAL_NB_MARKERS];
-		ros::Subscriber _subDampingMatrix;
+		ros::Subscriber _subDampingMatrix[NB_ROBOTS];
 
 		ros::Publisher _pubDesiredTwist[NB_ROBOTS];				// Publish desired twist
 		ros::Publisher _pubDesiredOrientation[NB_ROBOTS];  // Publish desired orientation
@@ -143,7 +143,7 @@ class ObjectGrabbing
 		bool _firstRobotTwist[NB_ROBOTS];	// Monitor the first robot pose update
 		bool _firstWrenchReceived[NB_ROBOTS];
     bool _firstOptitrackPose[TOTAL_NB_MARKERS];
-		bool _firstDampingMatrix;
+		bool _firstDampingMatrix[NB_ROBOTS];
 		bool _optitrackOK;
 		bool _wrenchBiasOK[NB_ROBOTS];
     bool _moveToAttractor;
@@ -185,7 +185,17 @@ class ObjectGrabbing
 		std::ofstream _outputFile;
 
 		// Tank parameters
-		Eigen::Matrix3f _D;
+		Eigen::Matrix3f _D[NB_ROBOTS];
+    float _s[NB_ROBOTS];
+    float _smax;
+    float _alpha[NB_ROBOTS];
+    float _beta[NB_ROBOTS];
+    float _betap[NB_ROBOTS];
+    float _gamma[NB_ROBOTS];
+    float _gammap[NB_ROBOTS];
+    float _ut[NB_ROBOTS];
+    float _vt[NB_ROBOTS];
+
 
     SGF::SavitzkyGolayFilter _xCFilter;
     SGF::SavitzkyGolayFilter _xLFilter;
@@ -195,6 +205,8 @@ class ObjectGrabbing
     ContactDynamics _contactDynamics;
 
     Eigen::Vector3f _vdC;
+
+    bool _ensurePassivity;
 
 		// float _s;
 		// float _smax;
@@ -246,7 +258,7 @@ class ObjectGrabbing
 
     void updateRobotWrench(const geometry_msgs::WrenchStamped::ConstPtr& msg, int k);
 
-    void updateDampingMatrix(const std_msgs::Float32MultiArray::ConstPtr& msg); 
+    void updateDampingMatrix(const std_msgs::Float32MultiArray::ConstPtr& msg, int k); 
 
 		void updateOptitrackPose(const geometry_msgs::PoseStamped::ConstPtr& msg, int k);
 		    

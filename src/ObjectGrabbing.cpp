@@ -45,8 +45,13 @@ ObjectGrabbing::ObjectGrabbing(ros::NodeHandle &n, double frequency, ContactDyna
     _firstRobotPose[k] = false;
     _firstRobotTwist[k] = false;
     _firstWrenchReceived[k] = false;
+    _firstDampingMatrix[k] = false;
     _lambda1[k] = 0.0f;
+    _s[k] = 0.0f;
   }
+
+  _smax = 0.2f;
+
 
   for(int k = 0; k < TOTAL_NB_MARKERS; k++)
   {
@@ -101,6 +106,8 @@ ObjectGrabbing::ObjectGrabbing(ros::NodeHandle &n, double frequency, ContactDyna
   _offset.setConstant(0.0f);
   _vdC.setConstant(0.0f);
 
+  _ensurePassivity = true;
+
   // _firstDampingMatrix = false;
   // _D.setConstant(0.0f);
   // _smax = 0.2f;
@@ -136,10 +143,12 @@ bool ObjectGrabbing::init()
   // Subscriber definitions
   _subRobotPose[RIGHT] = _n.subscribe<geometry_msgs::Pose>("/lwr/ee_pose", 1, boost::bind(&ObjectGrabbing::updateRobotPose,this,_1,RIGHT),ros::VoidPtr(), ros::TransportHints().reliable().tcpNoDelay());
   _subRobotTwist[RIGHT] = _n.subscribe<geometry_msgs::Twist>("/lwr/joint_controllers/twist", 1, boost::bind(&ObjectGrabbing::updateRobotTwist,this,_1,RIGHT),ros::VoidPtr(), ros::TransportHints().reliable().tcpNoDelay());
+  _subDampingMatrix[RIGHT] = _n.subscribe<std_msgs::Float32MultiArray>("/lwr/joint_controllers/passive_ds_damping_matrix", 1, boost::bind(&ObjectGrabbing::updateDampingMatrix,this,_1,RIGHT),ros::VoidPtr(),ros::TransportHints().reliable().tcpNoDelay());
   _subForceTorqueSensor[RIGHT] = _n.subscribe<geometry_msgs::WrenchStamped>("/ft_sensor_right/netft_data", 1, boost::bind(&ObjectGrabbing::updateRobotWrench,this,_1,RIGHT),ros::VoidPtr(), ros::TransportHints().reliable().tcpNoDelay());
 
   _subRobotPose[LEFT] = _n.subscribe<geometry_msgs::Pose>("/lwr2/ee_pose", 1, boost::bind(&ObjectGrabbing::updateRobotPose,this,_1,LEFT),ros::VoidPtr(), ros::TransportHints().reliable().tcpNoDelay());
   _subRobotTwist[LEFT] = _n.subscribe<geometry_msgs::Twist>("/lwr2/joint_controllers/twist", 1, boost::bind(&ObjectGrabbing::updateRobotTwist,this,_1,LEFT),ros::VoidPtr(), ros::TransportHints().reliable().tcpNoDelay());
+  _subDampingMatrix[LEFT] = _n.subscribe<std_msgs::Float32MultiArray>("/lwr2/joint_controllers/passive_ds_damping_matrix", 1, boost::bind(&ObjectGrabbing::updateDampingMatrix,this,_1,LEFT),ros::VoidPtr(),ros::TransportHints().reliable().tcpNoDelay());
   _subForceTorqueSensor[LEFT] = _n.subscribe<geometry_msgs::WrenchStamped>("/ft_sensor_left/netft_data", 1, boost::bind(&ObjectGrabbing::updateRobotWrench,this,_1,LEFT),ros::VoidPtr(), ros::TransportHints().reliable().tcpNoDelay());
 
   _subOptitrackPose[ROBOT_BASIS_RIGHT] = _n.subscribe<geometry_msgs::PoseStamped>("/optitrack/robot_right/pose", 1, boost::bind(&ObjectGrabbing::updateOptitrackPose,this,_1,ROBOT_BASIS_RIGHT),ros::VoidPtr(),ros::TransportHints().reliable().tcpNoDelay());
@@ -148,7 +157,6 @@ bool ObjectGrabbing::init()
   _subOptitrackPose[P2] = _n.subscribe<geometry_msgs::PoseStamped>("/optitrack/p2/pose", 1, boost::bind(&ObjectGrabbing::updateOptitrackPose,this,_1,P2),ros::VoidPtr(),ros::TransportHints().reliable().tcpNoDelay());
   _subOptitrackPose[P3] = _n.subscribe<geometry_msgs::PoseStamped>("/optitrack/p3/pose", 1, boost::bind(&ObjectGrabbing::updateOptitrackPose,this,_1,P3),ros::VoidPtr(),ros::TransportHints().reliable().tcpNoDelay());
   _subOptitrackPose[P4] = _n.subscribe<geometry_msgs::PoseStamped>("/optitrack/p4/pose", 1, boost::bind(&ObjectGrabbing::updateOptitrackPose,this,_1,P4),ros::VoidPtr(),ros::TransportHints().reliable().tcpNoDelay());
-  _subDampingMatrix = _n.subscribe("/lwr/joint_controllers/passive_ds_damping_matrix", 1, &ObjectGrabbing::updateDampingMatrix,this,ros::TransportHints().reliable().tcpNoDelay());
 
   // Publisher definitions
   _pubDesiredTwist[RIGHT] = _n.advertise<geometry_msgs::Twist>("/lwr/joint_controllers/passive_ds_command_vel", 1);
@@ -379,6 +387,7 @@ void ObjectGrabbing::computeCommand()
 void ObjectGrabbing::computeProjectionOnSurface()
 {
 
+
 }
 
 
@@ -453,9 +462,9 @@ void ObjectGrabbing::computeOriginalDynamics()
   //   vdL = 3.0f*(1-std::tanh(10.0f*(_xdC-_xC).norm()))*(_xdL-_xL).dot(_xdL.normalized())*_xdL.normalized();
 
   // Get robot dynamics + adjust z dynamics to make them at the same height
-  _vdOrig[RIGHT] = vdC+vdL/2.0f;
+  _vdOrig[RIGHT] = _vdC+vdL/2.0f;
   _vdOrig[RIGHT](2) += -2.0f*(_x[RIGHT](2)-_x[LEFT](2));
-  _vdOrig[LEFT] = vdC-vdL/2.0f;
+  _vdOrig[LEFT] = _vdC-vdL/2.0f;
   _vdOrig[LEFT](2) += -2.0f*(_x[LEFT](2)-_x[RIGHT](2));
 
   // for(int k = 0; k < NB_ROBOTS; k++)
@@ -484,8 +493,67 @@ void ObjectGrabbing::rotatingDynamics()
 
 void ObjectGrabbing::updateTankScalars()
 {
+  for(int k = 0; k < NB_ROBOTS; k++)
+  {
+    if(_s[k]>_smax)
+    {
+      _alpha[k] = 0.0f;
+    }
+    else
+    {
+      _alpha[k] = 1.0f;
+    }
+    _alpha[k] = smoothFall(_s[k],_smax-0.1f*_smax,_smax);
 
+    float dz = 0.01f;
+    float ds = 0.1f*_smax;
+
+    _ut[k] = _v[k].dot(_vdR[k]);
+
+    if(_s[k] < 0.0f && _ut[k] < 0.0f)
+    {
+      _beta[k] = 0.0f;
+      // ROS_INFO("BOOOOOOOOOOOOOUUUUUUUUU");
+    }
+    else if(_s[k] > _smax && _ut[k] > 0.0f)
+    {
+      _beta[k] = 0.0f;
+    }
+    else
+    {
+      _beta[k] = 1.0f;
+    }
+    
+    _vt[k] = _v[k].dot(_e1[k]);
+    
+    if(_s[k] < 0.0f && _vt[k] > 0.0f)
+    {
+      _gamma[k] = 0.0f;
+    }
+    else if(_s[k] > _smax && _vt[k] < 0.0f)
+    {
+      _gamma[k] = 0.0f;
+    }
+    else
+    {
+      _gamma[k] = 1.0f;
+    }
+
+     // _gamma = 1.0f-smoothRise(_s,_smax-ds,_smax)*smoothFall(_vt,0.0f,dz)-smoothFall(_s,0.0f,ds)*smoothRise(_vt,-dz,0.0f);
+
+    if(_vt[k]<0.0f)
+    {
+      _gammap[k] = 1.0f;
+    }
+    else
+    {
+      _gammap[k] = _gamma[k];
+    }
+
+    // std::cerr << k << ": alpha: " << _alpha[k] << " beta: " << _beta[k] << " gamma: " << _gamma[k] << " gammap: " << _gammap[k] << std::endl;
+  }
 }
+
 
 Eigen::Vector3f ObjectGrabbing::getCyclingMotionVelocity(Eigen::Vector3f position, Eigen::Vector3f attractor)
 {
@@ -498,7 +566,7 @@ Eigen::Vector3f ObjectGrabbing::getCyclingMotionVelocity(Eigen::Vector3f positio
   float R = sqrt(position(0) * position(0) + position(1) * position(1));
   float T = atan2(position(1), position(0));
 
-  float r = 0.15f;
+  float r = 0.05f;
   float omega = M_PI;
 
   velocity(0) = -(R-r) * cos(T) - R * omega * sin(T);
@@ -586,6 +654,10 @@ void ObjectGrabbing::forceModulation()
     else
     {
       lb = _Fd[k]/temp;
+      if(_ensurePassivity)
+      {
+        lb = _gammap[k]*_Fd[k]/temp;
+      }
     }
 
     delta = std::pow(2.0f*_e1[k].dot(_vdR[k])*lb*temp,2.0f)+4.0f*std::pow(_vdR[k].norm(),4.0f); 
@@ -598,7 +670,35 @@ void ObjectGrabbing::forceModulation()
     else
     {
       la = (-2.0f*_e1[k].dot(_vdR[k])*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdR[k].norm(),2.0f));
+      if(_ensurePassivity && _s[k] < 0.0f && _ut[k] < 0.0f)
+      {
+        la = 1.0f;
+      }
     }
+
+    // Update tank dynamics
+    float ds;
+
+    if(_firstDampingMatrix[k])
+    {
+      ds = _dt*(_alpha[k]*_v[k].transpose()*_D[k]*_v[k]-_beta[k]*_lambda1[k]*(la-1.0f)*_ut[k]-_gamma[k]*_Fd[k]*_vt[k]);
+
+      if(_s[k]+ds>=_smax)
+      {
+        _s[k] = _smax;
+      }
+      else if(_s[k]+ds<=0.0f)
+      {
+        _s[k] = 0.0f;
+      }
+      else
+      {
+        _s[k]+=ds;
+      }
+    }
+
+    float dW;
+    dW = _lambda1[k]*(la-1.0f)*(1-_beta[k])*_ut[k]+_Fd[k]*(_gammap[k]-_gamma[k])*_vt[k]-(1-_alpha[k])*_v[k].transpose()*_D[k]*_v[k];
 
     L(0,0) = la+lb;
     L(0,1) = lb;
@@ -615,18 +715,31 @@ void ObjectGrabbing::forceModulation()
     if(fabs(_vdR[k].norm())<FLT_EPSILON)
     {
       _vd[k] = _Fd[k]*_e1[k];
+      if(_ensurePassivity)
+      {
+      _vd[k] = _gammap[k]*_Fd[k]*_e1[k];
+
+      }
     }
     else
     {
       _vd[k] = M*_vdR[k];
     }
+
     _vd[k]+=_vdC;
 
     // std::cerr <<"Measured force: " << (-_wRb*_filteredWrench.segment(0,3)).dot(_e1) << " Fd:  " << _Fd*_lambda1 << " vdR: " << _vdR.norm() << std::endl;
-    // std::cerr << k <<" delta: " << delta << " la: " << la << " lb: " << lb << " vd: " << _vd[k].norm() << std::endl;
-    // std::cerr << k << ": " << _Fd[k]*_lambda1[k] << " " <<_e1[k].transpose() << std::endl;
+    std::cerr << k <<" delta: " << delta << " la: " << la << " lb: " << lb << " vdr.dot(e1) " << _e1[k].dot(_vdR[k]) << std::endl;
+    std::cerr << k << ": " << _Fd[k]*_lambda1[k] << " " <<_e1[k].transpose() << " " << _vdR[k].transpose() << std::endl;
     // std::cerr << k << ": " << _vdR[k].transpose() << " " << _vd[k].transpose() << std::endl;
     // std::cerr << k << ": " << la*_vdR[k].transpose() << " " << temp*lb*_e1[k].transpose() << std::endl;
+
+      // std::cerr << k << " Tank: " << _s[k]  <<" dW: " << dW <<std::endl;
+      // std::cerr << _alpha[k]*_v[k].transpose()*_D[k]*_v[k]<< " " << -_beta[k]*_lambda1[k]*(la-1.0f)*_ut[k] << " " << -_gamma[k]*_Fd[k]*_vt[k] << std::endl;
+      // std::cerr << "at: " << _alpha[k]*_v[k].transpose()*_D[k]*_v[k] << std::endl;
+      // std::cerr << k << ": ut: " << _ut[k] <<  " " << -_beta[k]*_lambda1[k]*(la-1.0f)*_ut[k] << std::endl;
+      // std::cerr << k << ": vt: " << _vt[k] << " " << -_gamma[k]*_Fd[k]*_vt[k] << std::endl;
+
     // Bound desired velocity  
     if(_vd[k].norm()>_velocityLimit)
     {
@@ -889,16 +1002,16 @@ void ObjectGrabbing::updateRobotWrench(const geometry_msgs::WrenchStamped::Const
   }
 }
 
-void ObjectGrabbing::updateDampingMatrix(const std_msgs::Float32MultiArray::ConstPtr& msg) 
+void ObjectGrabbing::updateDampingMatrix(const std_msgs::Float32MultiArray::ConstPtr& msg, int k) 
 {
-  if(!_firstDampingMatrix)
+  if(!_firstDampingMatrix[k])
   {
-    _firstDampingMatrix = true;
+    _firstDampingMatrix[k] = true;
   }
 
-  _D << msg->data[0],msg->data[1],msg->data[2],
-        msg->data[3],msg->data[4],msg->data[5],
-        msg->data[6],msg->data[7],msg->data[8];
+  _D[k] << msg->data[0],msg->data[1],msg->data[2],
+           msg->data[3],msg->data[4],msg->data[5],
+           msg->data[6],msg->data[7],msg->data[8];
 }
 
 
