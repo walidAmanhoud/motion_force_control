@@ -2,10 +2,11 @@
 
 ObjectGrabbing* ObjectGrabbing::me = NULL;
 
-ObjectGrabbing::ObjectGrabbing(ros::NodeHandle &n, double frequency, ContactDynamics contactDynamics, float targetVelocity, float targetForce):
+ObjectGrabbing::ObjectGrabbing(ros::NodeHandle &n, double frequency, std::string filename, ContactDynamics contactDynamics, float targetVelocity, float targetForce):
   _n(n),
   _loopRate(frequency),
   _dt(1.0f/frequency),
+  _filename(filename),
   _contactDynamics(contactDynamics),
   _targetVelocity(targetVelocity),
   _targetForce(targetForce),
@@ -21,6 +22,7 @@ ObjectGrabbing::ObjectGrabbing(ros::NodeHandle &n, double frequency, ContactDyna
   _toolOffset = 0.13f;
   // _toolOffset = 0.0f;
   _loadMass = 0.7f;
+  _smax = 0.2f;
 
   for(int k= 0; k < NB_ROBOTS; k++)
   {
@@ -46,11 +48,18 @@ ObjectGrabbing::ObjectGrabbing(ros::NodeHandle &n, double frequency, ContactDyna
     _firstRobotTwist[k] = false;
     _firstWrenchReceived[k] = false;
     _firstDampingMatrix[k] = false;
-    _lambda1[k] = 0.0f;
+    _lambda1[k] = 1.0f;
     _s[k] = 0.0f;
+    _alpha[k] = 0.0f;
+    _beta[k] = 0.0f;
+    _betap[k] = 0.0f;
+    _gamma[k] = 0.0f;
+    _gammap[k] = 0.0f;
+    _ut[k] = 0.0f;
+    _vt[k] = 0.0f;
+    _dW[k] = 0.0f;
   }
 
-  _smax = 0.2f;
 
 
   for(int k = 0; k < TOTAL_NB_MARKERS; k++)
@@ -179,6 +188,12 @@ bool ObjectGrabbing::init()
 
   signal(SIGINT,ObjectGrabbing::stopNode);
 
+  _outputFile.open(ros::package::getPath(std::string("motion_force_control"))+"/data_grabbing/"+_filename+".txt");
+  if(!_outputFile.is_open())
+  {
+    ROS_ERROR("Cannot open data file");
+    return false;
+  }
 
   if(_contactDynamics == NONE)
   {
@@ -275,7 +290,7 @@ void ObjectGrabbing::run()
         publishData();          
 
         // Log data
-        // logData();
+        logData();
       }
 
       _mutex.unlock();
@@ -301,7 +316,9 @@ void ObjectGrabbing::run()
   ros::spinOnce();
   _loopRate.sleep();
 
+  _outputFile.close();
   ros::shutdown();
+
 }
 
 
@@ -426,9 +443,13 @@ void ObjectGrabbing::computeOriginalDynamics()
     _distance = 0.0f;
   }
 
+  _xdL = _xoL;
 
 
-  // Compute coupled robots'center and distance dynamics 
+
+  _e1[LEFT] = _xdL.normalized();
+  _e1[RIGHT] = -_xdL.normalized();
+
 
   Eigen::Vector3f vdC, vdL;
 
@@ -442,8 +463,8 @@ void ObjectGrabbing::computeOriginalDynamics()
     {
       vdC = (_taskAttractor+_offset-_xC);
       // vdC = getCyclingMotionVelocity(_xC, _taskAttractor);
-      _xdL << 0.0f,-1.0f,0.0f;
-      _xdL *= 0.19f;
+      // _xdL << 0.0f,-1.0f,0.0f;
+      // _xdL *= 0.19f;
       // _xdL = _xL;
     }
     else
@@ -589,13 +610,8 @@ void ObjectGrabbing::forceModulation()
 
   // Compute modulation frame B(x)
 
-
-
   for(int k = 0; k < NB_ROBOTS; k++)
   {
-
-    Eigen::Vector3f xDir;
-    xDir << 1.0f,0.0f,0.0f;
     if(k == (int) LEFT)
     {
       _e1[k] = _xdL.normalized();
@@ -606,19 +622,14 @@ void ObjectGrabbing::forceModulation()
     }
 
     _normalForce[k] = fabs((_wRb[k]*_filteredWrench[k].segment(0,3)).dot(_e1[k]));
-    Eigen::Matrix3f B;
-    _e2[k] = (Eigen::Matrix3f::Identity()-_e1[k]*_e1[k].transpose())*xDir;
-    _e2[k].normalize();
-    _e3[k] = _e1[k].cross(_e2[k]);
-    _e3[k].normalize();
-    B.col(0) = _e1[k];
-    B.col(1) = _e2[k];
-    B.col(2) = _e3[k];
-
-    // Compute force profile
 
     // std::cerr << smoothFall(_distance,0.02f,0.1f) << std::endl;
     float alpha = smoothFall(_distance,0.02f,0.1f)*smoothFall((_xdC-_xC).norm(),0.1f,0.2f);
+
+    if(_lambda1[k]<1.0f)
+    {
+      _lambda1[k] = 1.0f;
+    }
 
     if(_objectGrabbed)
     {
@@ -630,50 +641,28 @@ void ObjectGrabbing::forceModulation()
       // _Fd[k] = _targetForce*(1.0f-std::tanh(10.0f*_distance))*(1.0f-std::tanh(10.0f*(_xdC-_xC).norm()))/_lambda1[k];    
       _Fd[k] = _targetForce*alpha/_lambda1[k];    
     }
-    if(_lambda1[k]<1.0f)
+
+    if(_ensurePassivity)
     {
-      _lambda1[k] = 1.0f;
+      _Fd[k]*=_gammap[k];
     }
 
-    // Compute diagonal gain matrix L(x)
-    Eigen::Matrix3f L = Eigen::Matrix3f::Zero();
-    float la, lb, lc;
+    float delta = std::pow(2.0f*_e1[k].dot(_vdR[k])*_Fd[k],2.0f)+4.0f*std::pow(_vdR[k].norm(),4.0f); 
 
-    float temp, delta;
+    float la;
 
-
-    temp = (_e1[k]+_e2[k]+_e3[k]).dot(_vdR[k]);
-
-    // std::cerr << "vdR: " << (_vdR[k]).transpose() << std::endl;
-    // std::cerr << "L part: " << (_vdR[k]-_vdC).transpose() << std::endl;
-
-    if(fabs(temp)<FLT_EPSILON)
+    if(fabs(_vdR[k].norm())<FLT_EPSILON)
     {
-      lb = 0.0f;
-    }
-    else
-    {
-      lb = _Fd[k]/temp;
-      if(_ensurePassivity)
-      {
-        lb = _gammap[k]*_Fd[k]/temp;
-      }
-    }
-
-    delta = std::pow(2.0f*_e1[k].dot(_vdR[k])*lb*temp,2.0f)+4.0f*std::pow(_vdR[k].norm(),4.0f); 
-
-    if(delta < FLT_EPSILON)
-    {
-      delta = 0.0f;
       la = 0.0f;
     }
     else
     {
-      la = (-2.0f*_e1[k].dot(_vdR[k])*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdR[k].norm(),2.0f));
-      if(_ensurePassivity && _s[k] < 0.0f && _ut[k] < 0.0f)
-      {
-        la = 1.0f;
-      }
+      la = (-2.0f*_e1[k].dot(_vdR[k])*_Fd[k]+sqrt(delta))/(2.0f*std::pow(_vdR[k].norm(),2.0f));
+    }
+    
+    if(_ensurePassivity && _s[k] < 0.0f && _ut[k] < 0.0f)
+    {
+      la = 1.0f;
     }
 
     // Update tank dynamics
@@ -697,44 +686,27 @@ void ObjectGrabbing::forceModulation()
       }
     }
 
-    float dW;
-    dW = _lambda1[k]*(la-1.0f)*(1-_beta[k])*_ut[k]+_Fd[k]*(_gammap[k]-_gamma[k])*_vt[k]-(1-_alpha[k])*_v[k].transpose()*_D[k]*_v[k];
+    _dW[k] = _lambda1[k]*(la-1.0f)*(1-_beta[k])*_ut[k]+_Fd[k]*(_gammap[k]-_gamma[k])*_vt[k]-(1-_alpha[k])*_v[k].transpose()*_D[k]*_v[k];
 
-    L(0,0) = la+lb;
-    L(0,1) = lb;
-    L(0,2) = lb;
-    L(1,1) = la;
-    L(2,2) = la;
 
-    // Compute modulation matrix
-    Eigen::Matrix3f M;
-    M = B*L*B.transpose();
-
-    // Apply force modulation to the rotating dynamics
-
-    if(fabs(_vdR[k].norm())<FLT_EPSILON)
+    if(_ensurePassivity)
     {
-      _vd[k] = _Fd[k]*_e1[k];
-      if(_ensurePassivity)
-      {
-      _vd[k] = _gammap[k]*_Fd[k]*_e1[k];
-
-      }
+      _vd[k] = la*_vdR[k]+_gammap[k]*_Fd[k]*_e1[k];
     }
     else
     {
-      _vd[k] = M*_vdR[k];
+      _vd[k] = la*_vdR[k]+_Fd[k]*_e1[k];
     }
 
     _vd[k]+=_vdC;
 
     // std::cerr <<"Measured force: " << (-_wRb*_filteredWrench.segment(0,3)).dot(_e1) << " Fd:  " << _Fd*_lambda1 << " vdR: " << _vdR.norm() << std::endl;
-    std::cerr << k <<" delta: " << delta << " la: " << la << " lb: " << lb << " vdr.dot(e1) " << _e1[k].dot(_vdR[k]) << std::endl;
-    std::cerr << k << ": " << _Fd[k]*_lambda1[k] << " " <<_e1[k].transpose() << " " << _vdR[k].transpose() << std::endl;
+    // std::cerr << k <<" delta: " << delta << " la: " << la << " vdr.dot(e1) " << _e1[k].dot(_vdR[k]) << std::endl;
+    // std::cerr << k << ": " << _Fd[k]*_lambda1[k] << " " <<_e1[k].transpose() << " " << _vdR[k].transpose() << std::endl;
     // std::cerr << k << ": " << _vdR[k].transpose() << " " << _vd[k].transpose() << std::endl;
     // std::cerr << k << ": " << la*_vdR[k].transpose() << " " << temp*lb*_e1[k].transpose() << std::endl;
 
-      // std::cerr << k << " Tank: " << _s[k]  <<" dW: " << dW <<std::endl;
+      std::cerr << k << " Tank: " << _s[k]  <<" dW: " << _dW[k] <<std::endl;
       // std::cerr << _alpha[k]*_v[k].transpose()*_D[k]*_v[k]<< " " << -_beta[k]*_lambda1[k]*(la-1.0f)*_ut[k] << " " << -_gamma[k]*_Fd[k]*_vt[k] << std::endl;
       // std::cerr << "at: " << _alpha[k]*_v[k].transpose()*_D[k]*_v[k] << std::endl;
       // std::cerr << k << ": ut: " << _ut[k] <<  " " << -_beta[k]*_lambda1[k]*(la-1.0f)*_ut[k] << std::endl;
@@ -851,6 +823,41 @@ void ObjectGrabbing::computeDesiredOrientation()
 
 void ObjectGrabbing::logData()
 {
+    _outputFile << ros::Time::now() << " "
+                << _x[LEFT].transpose() << " "
+                << _v[LEFT].transpose() << " "
+                << _vdR[LEFT].transpose() << " "
+                << _vd[LEFT].transpose() << " "
+                << _normalForce[LEFT] << " "
+                << _Fd[LEFT]*_lambda1[LEFT] << " "
+                << _x[RIGHT].transpose() << " "
+                << _v[RIGHT].transpose() << " "
+                << _vdR[RIGHT].transpose() << " "
+                << _vd[RIGHT].transpose() << " "
+                << _normalForce[RIGHT] << " "
+                << _Fd[RIGHT]*_lambda1[RIGHT] << " "
+                << _e1[LEFT].transpose() << " "
+                << _vdC.transpose() << " "
+                << _xoC.transpose() << " "
+                << _xoL.transpose() << " "
+                << _xdC.transpose() << " "
+                << _xdL.transpose() << " "
+                << (int) _objectGrabbed << " "
+                << (int) _ensurePassivity << " "
+                << _s[LEFT] << " " 
+                << _alpha[LEFT] << " "
+                << _beta[LEFT] << " "
+                << _betap[LEFT] << " "
+                << _gamma[LEFT] << " "
+                << _gammap[LEFT] << " "
+                << _dW[LEFT] << " "
+                << _s[RIGHT] << " " 
+                << _alpha[RIGHT] << " "
+                << _beta[RIGHT] << " "
+                << _betap[RIGHT] << " "
+                << _gamma[RIGHT] << " "
+                << _gammap[RIGHT] << " "
+                << _dW[RIGHT] << std::endl;
 
 }
 
@@ -1268,4 +1275,177 @@ float ObjectGrabbing::smoothFall(float x, float a, float b)
 float ObjectGrabbing::smoothRiseFall(float x, float a, float b, float c, float d)
 {
   return smoothRise(x,a,b)*smoothFall(x,c,d);
+}
+
+
+void ObjectGrabbing::forceModulation2()
+{
+  // Extract linear speed, force and torque data
+
+  // Compute modulation matrix used to apply a force Fd when the surface is reached while keeping the norm of the velocity constant 
+  // M(x) = B(x)L(x)B(x)
+  // B(x) = [e1 e2 e3] with e1 = -n is an orthognal basis defining the modulation frame
+  //        [la lb lb] 
+  // L(x) = [0  lc 0 ] is the matrix defining the modulation gains to apply on the frame
+  //        [0  0  lc]
+
+  // Compute modulation frame B(x)
+
+
+
+  for(int k = 0; k < NB_ROBOTS; k++)
+  {
+
+    Eigen::Vector3f xDir;
+    xDir << 1.0f,0.0f,0.0f;
+    if(k == (int) LEFT)
+    {
+      _e1[k] = _xdL.normalized();
+    }
+    else
+    {
+      _e1[k] = -_xdL.normalized();
+    }
+
+    _normalForce[k] = fabs((_wRb[k]*_filteredWrench[k].segment(0,3)).dot(_e1[k]));
+    Eigen::Matrix3f B;
+    _e2[k] = (Eigen::Matrix3f::Identity()-_e1[k]*_e1[k].transpose())*xDir;
+    _e2[k].normalize();
+    _e3[k] = _e1[k].cross(_e2[k]);
+    _e3[k].normalize();
+    B.col(0) = _e1[k];
+    B.col(1) = _e2[k];
+    B.col(2) = _e3[k];
+
+    // Compute force profile
+
+    // std::cerr << smoothFall(_distance,0.02f,0.1f) << std::endl;
+    float alpha = smoothFall(_distance,0.02f,0.1f)*smoothFall((_xdC-_xC).norm(),0.1f,0.2f);
+
+    if(_objectGrabbed)
+    {
+      _Fd[k] = _targetForce/_lambda1[k];
+      // _Fd[k] = _targetForce*smoothFall(_distance,0.02f,0.1f)/_lambda1[k];
+    }
+    else
+    {
+      // _Fd[k] = _targetForce*(1.0f-std::tanh(10.0f*_distance))*(1.0f-std::tanh(10.0f*(_xdC-_xC).norm()))/_lambda1[k];    
+      _Fd[k] = _targetForce*alpha/_lambda1[k];    
+    }
+    if(_lambda1[k]<1.0f)
+    {
+      _lambda1[k] = 1.0f;
+    }
+
+    // Compute diagonal gain matrix L(x)
+    Eigen::Matrix3f L = Eigen::Matrix3f::Zero();
+    float la, lb, lc;
+
+    float temp, delta;
+
+
+    temp = (_e1[k]+_e2[k]+_e3[k]).dot(_vdR[k]);
+
+    // std::cerr << "vdR: " << (_vdR[k]).transpose() << std::endl;
+    // std::cerr << "L part: " << (_vdR[k]-_vdC).transpose() << std::endl;
+
+    if(fabs(temp)<FLT_EPSILON)
+    {
+      lb = 0.0f;
+    }
+    else
+    {
+      lb = _Fd[k]/temp;
+      if(_ensurePassivity)
+      {
+        lb = _gammap[k]*_Fd[k]/temp;
+      }
+    }
+
+    delta = std::pow(2.0f*_e1[k].dot(_vdR[k])*lb*temp,2.0f)+4.0f*std::pow(_vdR[k].norm(),4.0f); 
+
+    if(delta < FLT_EPSILON)
+    {
+      delta = 0.0f;
+      la = 0.0f;
+    }
+    else
+    {
+      la = (-2.0f*_e1[k].dot(_vdR[k])*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdR[k].norm(),2.0f));
+      if(_ensurePassivity && _s[k] < 0.0f && _ut[k] < 0.0f)
+      {
+        la = 1.0f;
+      }
+    }
+
+    // Update tank dynamics
+    float ds;
+
+    if(_firstDampingMatrix[k])
+    {
+      ds = _dt*(_alpha[k]*_v[k].transpose()*_D[k]*_v[k]-_beta[k]*_lambda1[k]*(la-1.0f)*_ut[k]-_gamma[k]*_Fd[k]*_vt[k]);
+
+      if(_s[k]+ds>=_smax)
+      {
+        _s[k] = _smax;
+      }
+      else if(_s[k]+ds<=0.0f)
+      {
+        _s[k] = 0.0f;
+      }
+      else
+      {
+        _s[k]+=ds;
+      }
+    }
+
+    float dW;
+    dW = _lambda1[k]*(la-1.0f)*(1-_beta[k])*_ut[k]+_Fd[k]*(_gammap[k]-_gamma[k])*_vt[k]-(1-_alpha[k])*_v[k].transpose()*_D[k]*_v[k];
+
+    L(0,0) = la+lb;
+    L(0,1) = lb;
+    L(0,2) = lb;
+    L(1,1) = la;
+    L(2,2) = la;
+
+    // Compute modulation matrix
+    Eigen::Matrix3f M;
+    M = B*L*B.transpose();
+
+    // Apply force modulation to the rotating dynamics
+
+    if(fabs(_vdR[k].norm())<FLT_EPSILON)
+    {
+      _vd[k] = _Fd[k]*_e1[k];
+      if(_ensurePassivity)
+      {
+      _vd[k] = _gammap[k]*_Fd[k]*_e1[k];
+
+      }
+    }
+    else
+    {
+      _vd[k] = M*_vdR[k];
+    }
+
+    _vd[k]+=_vdC;
+
+    // std::cerr <<"Measured force: " << (-_wRb*_filteredWrench.segment(0,3)).dot(_e1) << " Fd:  " << _Fd*_lambda1 << " vdR: " << _vdR.norm() << std::endl;
+    std::cerr << k <<" delta: " << delta << " la: " << la << " lb: " << lb << " vdr.dot(e1) " << _e1[k].dot(_vdR[k]) << std::endl;
+    std::cerr << k << ": " << _Fd[k]*_lambda1[k] << " " <<_e1[k].transpose() << " " << _vdR[k].transpose() << std::endl;
+    // std::cerr << k << ": " << _vdR[k].transpose() << " " << _vd[k].transpose() << std::endl;
+    // std::cerr << k << ": " << la*_vdR[k].transpose() << " " << temp*lb*_e1[k].transpose() << std::endl;
+
+      // std::cerr << k << " Tank: " << _s[k]  <<" dW: " << dW <<std::endl;
+      // std::cerr << _alpha[k]*_v[k].transpose()*_D[k]*_v[k]<< " " << -_beta[k]*_lambda1[k]*(la-1.0f)*_ut[k] << " " << -_gamma[k]*_Fd[k]*_vt[k] << std::endl;
+      // std::cerr << "at: " << _alpha[k]*_v[k].transpose()*_D[k]*_v[k] << std::endl;
+      // std::cerr << k << ": ut: " << _ut[k] <<  " " << -_beta[k]*_lambda1[k]*(la-1.0f)*_ut[k] << std::endl;
+      // std::cerr << k << ": vt: " << _vt[k] << " " << -_gamma[k]*_Fd[k]*_vt[k] << std::endl;
+
+    // Bound desired velocity  
+    if(_vd[k].norm()>_velocityLimit)
+    {
+      _vd[k] *= _velocityLimit/_vd[k].norm();
+    }   
+  }
 }

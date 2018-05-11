@@ -195,6 +195,7 @@ class ObjectGrabbing
     float _gammap[NB_ROBOTS];
     float _ut[NB_ROBOTS];
     float _vt[NB_ROBOTS];
+    float _dW[NB_ROBOTS];
 
 
     SGF::SavitzkyGolayFilter _xCFilter;
@@ -208,6 +209,9 @@ class ObjectGrabbing
 
     bool _ensurePassivity;
 
+    std::string _filename;
+
+
 		// float _s;
 		// float _smax;
 		// float _alpha;
@@ -220,7 +224,7 @@ class ObjectGrabbing
 	public:
 
 		// Class constructor
-		ObjectGrabbing(ros::NodeHandle &n, double frequency, ContactDynamics contactDynamics, float targetVelocity, float targetForce);
+		ObjectGrabbing(ros::NodeHandle &n, double frequency, std::string filename, ContactDynamics contactDynamics, float targetVelocity, float targetForce);
 
 		bool init();
 
@@ -245,6 +249,8 @@ class ObjectGrabbing
 		void updateTankScalars();
 
 		void forceModulation();
+
+    void forceModulation2();
 
 		void computeDesiredOrientation();
     
