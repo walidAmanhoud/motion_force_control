@@ -21,7 +21,7 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
 
   _gravity << 0.0f, 0.0f, -9.80665f;
   _loadOffset << 0.0f,0.0f,0.035f;
-  _toolOffset = 0.14f;
+  _toolOffset = 0.15f;
   _loadMass = 0.0f;
 
   _x.setConstant(0.0f);
@@ -40,9 +40,15 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
   _omegad.setConstant(0.0f);
   _qd.setConstant(0.0f);
 
-  _taskAttractor << -0.6f, -0.2f, 0.186f;
-  _contactAttractor << -0.6f, 0.2f, 0.186f;
-  _p << 0.0f,0.0f,0.19f;
+  // _taskAttractor << -0.6f, -0.2f, 0.186f;
+  // _contactAttractor << -0.6f, 0.2f, 0.186f;
+  // _taskAttractor << -0.55f, 0.0f, -0.007f;
+  // _contactAttractor << -0.55f, 0.0f, -0.007f;
+  _p << 0.0f,0.0f,-0.007f;
+
+  _taskAttractor << -0.65f, 0.0f, -0.007f;
+  _contactAttractor << -0.65f, 0.0f, -0.007f;
+  // _p << 0.0f,0.0f,-0.007f;
   
   _planeNormal << 0.0f, 0.0f, 1.0f;
 
@@ -65,6 +71,7 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
   _firstOptitrackP2Pose = false;
   _firstOptitrackP3Pose = false;
   _optitrackOK = false;
+  _ensurePassivity = false;
 
   _averageCount = 0;
 
@@ -80,6 +87,7 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
   _D.setConstant(0.0f);
   _smax = 0.2f;
   _s = 0.0f;
+  _dW = 0.0f;
 
   _msgMarker.header.frame_id = "world";
   _msgMarker.header.stamp = ros::Time();
@@ -380,6 +388,7 @@ void ModulatedDS::run()
       }
       else
       {
+
         // Compute control command
         computeCommand();
 
@@ -675,7 +684,6 @@ void ModulatedDS::updateTankScalars()
   if(_s < 0.0f && _ut < 0.0f)
   {
     _beta = 0.0f;
-    ROS_INFO("BOOOOOOOOOOOOOUUUUUUUUU");
   }
   else if(_s > _smax && _ut > 0.0f)
   {
@@ -685,26 +693,6 @@ void ModulatedDS::updateTankScalars()
   {
     _beta = 1.0f;
   }
-  
-  // _beta = 1.0f-smoothRise(_s,_smax-ds,_smax)*smoothRise(_ut,-dz,0.0f)-smoothFall(_s,0.0f,ds)*smoothFall(_ut,0.0f,dz);
-
-  //   if(_s <= 0.0f && _ut >= 0.0f)
-  // {
-  //   _beta = 0.0f;
-  //   // std::cerr <<"bou" << std::endl;
-  // }
-  // else if(_s >= _smax && _ut <= 0.0f)
-  // {
-  //   _beta = 0.0f;
-  // }
-  // else
-  // {
-  //   _beta = 1.0f;
-  // }
-
-
-  // _beta = 1.0f-smoothRise(_s,_smax-ds,_smax)*smoothFall(_ut,0.0f,dz)-smoothFall(_s,0.0f,ds)*smoothRise(_ut,-dz,0.0f);
-
 
 
   _vt = _v.dot(_e1);
@@ -720,8 +708,6 @@ void ModulatedDS::updateTankScalars()
   {
     _gamma = 1.0f;
   }
-
-   // _gamma = 1.0f-smoothRise(_s,_smax-ds,_smax)*smoothFall(_vt,0.0f,dz)-smoothFall(_s,0.0f,ds)*smoothRise(_vt,-dz,0.0f);
 
   if(_vt<0.0f)
   {
@@ -741,236 +727,85 @@ void ModulatedDS::forceModulation()
 {
   // Extract linear speed, force and torque data
 
-  // Compute modulation matrix used to apply a force Fd when the surface is reached while keeping the norm of the velocity constant 
-  // M(x) = B(x)L(x)B(x)
-  // B(x) = [e1 e2 e3] with e1 = -n is an orthognal basis defining the modulation frame
-  //        [la lb lb] 
-  // L(x) = [0  lc 0 ] is the matrix defining the modulation gains to apply on the frame
-  //        [0  0  lc]
-
-  // Compute modulation frame B(x)
-  Eigen::Vector3f xDir;
-  xDir << 1.0f,0.0f,0.0f;
-  Eigen::Matrix3f B;
-  _e2 = (Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*xDir;
-  _e2.normalize();
-  _e3 = _e1.cross(_e2);
-  _e3.normalize();
-  B.col(0) = _e1;
-  B.col(1) = _e2;
-  B.col(2) = _e3;
-
   // Compute force profile
   if(_lambda1<1.0f)
   {
     _lambda1 = 1.0f;
   }
 
-  if((-_wRb*_filteredWrench.segment(0,3)).dot(_e1)<2.0f)
+  if(_normalForce<3.0f)
   {
     _Fd = 5.0f/_lambda1;
   }
   else
   {
-    _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;    
-    // _Fd = (_targetForce*(1.0f-std::tanh(100.0f*_normalDistance))+_integratorGain*(_targetForce*(1.0f-std::tanh(100.0f*_normalDistance))+(_wRb*_filteredWrench.segment(0,3)).dot(_e1)))/_lambda1;    
+    // _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;
+    _Fd = _targetForce*smoothFall(_normalDistance,0.02f,0.1f)/_lambda1;
+    // smoothFall(_distance,0.02f,0.1f)    
+    // _Fd = (_targetForce*(1.0-f-std::tanh(100.0f*_normalDistance))+_integratorGain*(_targetForce*(1.0f-std::tanh(100.0f*_normalDistance))+(_wRb*_filteredWrench.segment(0,3)).dot(_e1)))/_lambda1;    
 
   }
   // _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;
 
-
-
-
-
-
-  // Compute diagonal gain matrix L(x)
-  Eigen::Matrix3f L = Eigen::Matrix3f::Zero();
-  float la, lb, lc;
-
-  float temp, delta;
-
-  switch(_formulation)
+  if(_ensurePassivity)
   {
-    case F1:
-    {
-      temp = (_e2+_e3).dot(_vdR);
-      if(fabs(temp)<FLT_EPSILON)
-      {
-        lb = 0.0f;
-      }
-      else
-      {
-        lb = _Fd/temp;
-      }
-
-      if(_constraint == VELOCITY_NORM)
-      {
-        delta = std::pow(2.0f*_e1.dot(_vdR)*lb*temp,2.0f)-4.0f*std::pow(_vdOrig.norm(),2.0f)*(std::pow(lb*temp,2.0f)-std::pow(_vdOrig.norm(),2.0f));
-      }
-      else if(_constraint == APPARENT_VELOCITY_NORM)
-      {
-        delta = std::pow(2.0f*_e1.dot(_vdR)*lb*temp,2.0f)+4.0f*std::pow(_vdOrig.norm(),4.0f); 
-      }
-
-      if(delta < 0.0f)
-      {
-        delta = 0.0f;
-      }
-
-      la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdOrig.norm(),2.0f));
-
-      L(0,0) = la;
-      L(0,1) = lb;
-      L(0,2) = lb;
-      L(1,1) = la;
-      L(2,2) = la;
-
-      break;
-    }
-    
-    case F2:
-    {
-      temp = (_e1+_e2+_e3).dot(_vdR);
-      if(fabs(temp)<FLT_EPSILON)
-      {
-        lb = 0.0f;
-      }
-      else
-      {
-        lb = _Fd/temp;
-        // lb = _gammap*_Fd/temp;
-      }
-
-      if(_constraint == VELOCITY_NORM)
-      {
-        delta = std::pow(2.0f*_e1.dot(_vdR)*lb*temp,2.0f)-4.0f*std::pow(_vdR.norm(),2.0f)*(std::pow(lb*temp,2.0f)-std::pow(_vdR.norm(),2.0f));
-      }
-      else if(_constraint == APPARENT_VELOCITY_NORM)
-      {
-        delta = std::pow(2.0f*_e1.dot(_vdR)*lb*temp,2.0f)+4.0f*std::pow(_vdR.norm(),4.0f); 
-      }
-
-      if(delta < 0.0f)
-      {
-        delta = 0.0f;
-        la = 0.0f;
-      }
-      else
-      {
-        la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdR.norm(),2.0f));
-      }
-
-      
-      // if(_s < 0.0f && _ut < 0.0f)
-      // {
-      //   la = 1.0f;
-      // }
-      // else
-      // {
-      //   la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdOrig.norm(),2.0f));
-      // }
-
-
-      // Update tank dynamics
-      float ds;
-
-      if(_firstDampingMatrix)
-      {
-        ds = _dt*(_alpha*_v.transpose()*_D*_v-_beta*_lambda1*(la-1.0f)*_ut-_gamma*_Fd*_vt);
-        // ds = _dt*(-_beta*_lambda1*(la-1.0f)*_ut-_gamma*_Fd*_vt);
-        // ds = _dt*(_alpha*_v.transpose()*_D*_v-_beta*_lambda1*la*_ut-_gamma*_Fd*_vt);
-        if(_s+ds>=_smax)
-        {
-          _s = _smax;
-        }
-        else if(_s+ds<=0.0f)
-        {
-          _s = 0.0f;
-        }
-        else
-        {
-          _s+=ds;
-        }
-      }
-
-      float dW;
-      dW = _lambda1*(la-1.0f)*(1-_beta)*_ut+_Fd*(_gammap-_gamma)*_vt-(1-_alpha)*_v.transpose()*_D*_v;
-
-      // std::cerr << "Tank: " << _s << " " <<_alpha*_v.transpose()*_D*_v<< " " << -_beta*_lambda1*(la-1.0f)*_ut << " " << -_gamma*_Fd*_vt << std::endl;
-      // std::cerr << "at: " << _alpha*_v.transpose()*_D*_v << std::endl;
-      // std::cerr << "ut: " << _ut <<  " " << -_beta*_lambda1*(la-1.0f)*_ut << std::endl;
-      // std::cerr << "vt: " << _vt << " " << -_gamma*_Fd*_vt << std::endl;
-      // std::cerr << "Tank: " << _s  <<" dW: " << dW <<std::endl;
-
-      L(0,0) = la+lb;
-      L(0,1) = lb;
-      L(0,2) = lb;
-      L(1,1) = la;
-      L(2,2) = la;
-
-      break;
-    }
-
-    case F3:
-    {
-      temp = (_e1+_e2+_e3).dot(_vdR);
-      if(fabs(temp)<FLT_EPSILON)
-      {
-        lb = 0.0f;
-      }
-      else
-      {
-        lb = (_Fd+_e1.dot(_vdR))/temp;
-      }
-
-      if(_constraint == VELOCITY_NORM)
-      {
-        delta = (_vdR.squaredNorm()-std::pow(lb*temp,2.0f))/(std::pow(_e2.dot(_vdR),2.0f)+std::pow(_e3.dot(_vdR),2.0f));
-      }
-      else if(_constraint == APPARENT_VELOCITY_NORM)
-      {
-        delta = (_vdR.squaredNorm()-2*lb*temp*_e1.dot(_vdR)+std::pow(_e1.dot(_vdR),2.0f))/(std::pow(_e2.dot(_vdR),2.0f)+std::pow(_e3.dot(_vdR),2.0f));
-      }
-
-      if(delta<0)
-      {
-        delta = 0.0f;
-      }
-      la = sqrt(delta)-1.0f; 
-
-      L(0,0) = lb;
-      L(0,1) = lb;
-      L(0,2) = lb;
-      L(1,1) = 1.0f+la;
-      L(2,2) = 1.0f+la; 
-
-      break;
-    }
-
-    default:
-    {
-      break; 
-    }
+    _Fd*=_gammap;
   }
 
-  // Compute modulation matrix
-  Eigen::Matrix3f M;
-  M = B*L*B.transpose();
+  float delta = std::pow(2.0f*_e1.dot(_vdR)*_Fd,2.0f)+4.0f*std::pow(_vdR.norm(),4.0f); 
 
-  // Apply force modulation to the rotating dynamics
+  float la;
 
   if(fabs(_vdR.norm())<FLT_EPSILON)
   {
-    _vd = _Fd*_e1;
+    la = 0.0f;
   }
   else
   {
-    _vd = M*_vdR;
+    la = (-2.0f*_e1.dot(_vdR)*_Fd+sqrt(delta))/(2.0f*std::pow(_vdR.norm(),2.0f));
+  }
+  
+  if(_ensurePassivity && _s < 0.0f && _ut < 0.0f)
+  {
+    la = 1.0f;
+  }
+
+  // Update tank dynamics
+  float ds;
+
+  if(_firstDampingMatrix)
+  {
+    ds = _dt*(_alpha*_v.transpose()*_D*_v-_beta*_lambda1*(la-1.0f)*_ut-_gamma*_Fd*_vt);
+
+    if(_s+ds>=_smax)
+    {
+      _s = _smax;
+    }
+    else if(_s+ds<=0.0f)
+    {
+      _s = 0.0f;
+    }
+    else
+    {
+      _s+=ds;
+    }
+  }
+
+  _dW = _lambda1*(la-1.0f)*(1-_beta)*_ut+_Fd*(_gammap-_gamma)*_vt-(1-_alpha)*_v.transpose()*_D*_v;
+
+
+  if(_ensurePassivity)
+  {
+    _vd = la*_vdR+_gammap*_Fd*_e1;
+  }
+  else
+  {
+    _vd = la*_vdR+_Fd*_e1;
   }
 
 
-  std::cerr <<"Measured force: " << (-_wRb*_filteredWrench.segment(0,3)).dot(_e1) << " Fd:  " << _Fd*_lambda1 << " vdR: " << _vdR.norm() << std::endl;
-  std::cerr << "delta: " << delta << " la: " << la << " lb: " << lb << " vd: " << _vd.norm() << std::endl;
+  std::cerr <<"Measured force: " << _normalForce << " Fd:  " << _Fd*_lambda1 << " vdR: " << _vdR.norm() << std::endl;
+  std::cerr << "delta: " << delta << " la: " << la << " vd: " << _vd.norm() << std::endl;
 
   // Bound desired velocity  
   if(_vd.norm()>_velocityLimit)
@@ -1543,4 +1378,251 @@ float ModulatedDS::smoothFall(float x, float a, float b)
 float ModulatedDS::smoothRiseFall(float x, float a, float b, float c, float d)
 {
   return smoothRise(x,a,b)*smoothFall(x,c,d);
+}
+
+
+void ModulatedDS::forceModulation2()
+{
+  // Extract linear speed, force and torque data
+
+  // Compute modulation matrix used to apply a force Fd when the surface is reached while keeping the norm of the velocity constant 
+  // M(x) = B(x)L(x)B(x)
+  // B(x) = [e1 e2 e3] with e1 = -n is an orthognal basis defining the modulation frame
+  //        [la lb lb] 
+  // L(x) = [0  lc 0 ] is the matrix defining the modulation gains to apply on the frame
+  //        [0  0  lc]
+
+  // Compute modulation frame B(x)
+  Eigen::Vector3f xDir;
+  xDir << 1.0f,0.0f,0.0f;
+  Eigen::Matrix3f B;
+  _e2 = (Eigen::Matrix3f::Identity()-_e1*_e1.transpose())*xDir;
+  _e2.normalize();
+  _e3 = _e1.cross(_e2);
+  _e3.normalize();
+  B.col(0) = _e1;
+  B.col(1) = _e2;
+  B.col(2) = _e3;
+
+  // Compute force profile
+  if(_lambda1<1.0f)
+  {
+    _lambda1 = 1.0f;
+  }
+
+  if((-_wRb*_filteredWrench.segment(0,3)).dot(_e1)<2.0f)
+  {
+    _Fd = 5.0f/_lambda1;
+  }
+  else
+  {
+    _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;    
+    // _Fd = (_targetForce*(1.0f-std::tanh(100.0f*_normalDistance))+_integratorGain*(_targetForce*(1.0f-std::tanh(100.0f*_normalDistance))+(_wRb*_filteredWrench.segment(0,3)).dot(_e1)))/_lambda1;    
+
+  }
+  // _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;
+
+
+
+
+
+
+  // Compute diagonal gain matrix L(x)
+  Eigen::Matrix3f L = Eigen::Matrix3f::Zero();
+  float la, lb, lc;
+
+  float temp, delta;
+
+  switch(_formulation)
+  {
+    case F1:
+    {
+      temp = (_e2+_e3).dot(_vdR);
+      if(fabs(temp)<FLT_EPSILON)
+      {
+        lb = 0.0f;
+      }
+      else
+      {
+        lb = _Fd/temp;
+      }
+
+      if(_constraint == VELOCITY_NORM)
+      {
+        delta = std::pow(2.0f*_e1.dot(_vdR)*lb*temp,2.0f)-4.0f*std::pow(_vdOrig.norm(),2.0f)*(std::pow(lb*temp,2.0f)-std::pow(_vdOrig.norm(),2.0f));
+      }
+      else if(_constraint == APPARENT_VELOCITY_NORM)
+      {
+        delta = std::pow(2.0f*_e1.dot(_vdR)*lb*temp,2.0f)+4.0f*std::pow(_vdOrig.norm(),4.0f); 
+      }
+
+      if(delta < 0.0f)
+      {
+        delta = 0.0f;
+      }
+
+      la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdOrig.norm(),2.0f));
+
+      L(0,0) = la;
+      L(0,1) = lb;
+      L(0,2) = lb;
+      L(1,1) = la;
+      L(2,2) = la;
+
+      break;
+    }
+    
+    case F2:
+    {
+      temp = (_e1+_e2+_e3).dot(_vdR);
+      if(fabs(temp)<FLT_EPSILON)
+      {
+        lb = 0.0f;
+      }
+      else
+      {
+        lb = _Fd/temp;
+        // lb = _gammap*_Fd/temp;
+      }
+
+      if(_constraint == VELOCITY_NORM)
+      {
+        delta = std::pow(2.0f*_e1.dot(_vdR)*lb*temp,2.0f)-4.0f*std::pow(_vdR.norm(),2.0f)*(std::pow(lb*temp,2.0f)-std::pow(_vdR.norm(),2.0f));
+      }
+      else if(_constraint == APPARENT_VELOCITY_NORM)
+      {
+        delta = std::pow(2.0f*_e1.dot(_vdR)*lb*temp,2.0f)+4.0f*std::pow(_vdR.norm(),4.0f); 
+      }
+
+      if(delta < 0.0f)
+      {
+        delta = 0.0f;
+        la = 0.0f;
+      }
+      else
+      {
+        la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdR.norm(),2.0f));
+      }
+
+      
+      // if(_s < 0.0f && _ut < 0.0f)
+      // {
+      //   la = 1.0f;
+      // }
+      // else
+      // {
+      //   la = (-2.0f*_e1.dot(_vdR)*lb*temp+sqrt(delta))/(2.0f*std::pow(_vdOrig.norm(),2.0f));
+      // }
+
+
+      // Update tank dynamics
+      float ds;
+
+      if(_firstDampingMatrix)
+      {
+        ds = _dt*(_alpha*_v.transpose()*_D*_v-_beta*_lambda1*(la-1.0f)*_ut-_gamma*_Fd*_vt);
+        // ds = _dt*(-_beta*_lambda1*(la-1.0f)*_ut-_gamma*_Fd*_vt);
+        // ds = _dt*(_alpha*_v.transpose()*_D*_v-_beta*_lambda1*la*_ut-_gamma*_Fd*_vt);
+        if(_s+ds>=_smax)
+        {
+          _s = _smax;
+        }
+        else if(_s+ds<=0.0f)
+        {
+          _s = 0.0f;
+        }
+        else
+        {
+          _s+=ds;
+        }
+      }
+
+      float dW;
+      dW = _lambda1*(la-1.0f)*(1-_beta)*_ut+_Fd*(_gammap-_gamma)*_vt-(1-_alpha)*_v.transpose()*_D*_v;
+
+      // std::cerr << "Tank: " << _s << " " <<_alpha*_v.transpose()*_D*_v<< " " << -_beta*_lambda1*(la-1.0f)*_ut << " " << -_gamma*_Fd*_vt << std::endl;
+      // std::cerr << "at: " << _alpha*_v.transpose()*_D*_v << std::endl;
+      // std::cerr << "ut: " << _ut <<  " " << -_beta*_lambda1*(la-1.0f)*_ut << std::endl;
+      // std::cerr << "vt: " << _vt << " " << -_gamma*_Fd*_vt << std::endl;
+      // std::cerr << "Tank: " << _s  <<" dW: " << dW <<std::endl;
+
+      L(0,0) = la+lb;
+      L(0,1) = lb;
+      L(0,2) = lb;
+      L(1,1) = la;
+      L(2,2) = la;
+
+      break;
+    }
+
+    case F3:
+    {
+      temp = (_e1+_e2+_e3).dot(_vdR);
+      if(fabs(temp)<FLT_EPSILON)
+      {
+        lb = 0.0f;
+      }
+      else
+      {
+        lb = (_Fd+_e1.dot(_vdR))/temp;
+      }
+
+      if(_constraint == VELOCITY_NORM)
+      {
+        delta = (_vdR.squaredNorm()-std::pow(lb*temp,2.0f))/(std::pow(_e2.dot(_vdR),2.0f)+std::pow(_e3.dot(_vdR),2.0f));
+      }
+      else if(_constraint == APPARENT_VELOCITY_NORM)
+      {
+        delta = (_vdR.squaredNorm()-2*lb*temp*_e1.dot(_vdR)+std::pow(_e1.dot(_vdR),2.0f))/(std::pow(_e2.dot(_vdR),2.0f)+std::pow(_e3.dot(_vdR),2.0f));
+      }
+
+      if(delta<0)
+      {
+        delta = 0.0f;
+      }
+      la = sqrt(delta)-1.0f; 
+
+      L(0,0) = lb;
+      L(0,1) = lb;
+      L(0,2) = lb;
+      L(1,1) = 1.0f+la;
+      L(2,2) = 1.0f+la; 
+
+      break;
+    }
+
+    default:
+    {
+      break; 
+    }
+  }
+
+  // Compute modulation matrix
+  Eigen::Matrix3f M;
+  M = B*L*B.transpose();
+
+  // Apply force modulation to the rotating dynamics
+
+  if(fabs(_vdR.norm())<FLT_EPSILON)
+  {
+    _vd = _Fd*_e1;
+  }
+  else
+  {
+    _vd = M*_vdR;
+  }
+
+
+  std::cerr <<"Measured force: " << (-_wRb*_filteredWrench.segment(0,3)).dot(_e1) << " Fd:  " << _Fd*_lambda1 << " vdR: " << _vdR.norm() << std::endl;
+  std::cerr << "delta: " << delta << " la: " << la << " lb: " << lb << " vd: " << _vd.norm() << std::endl;
+
+  // Bound desired velocity  
+  if(_vd.norm()>_velocityLimit)
+  {
+    _vd *= _velocityLimit/_vd.norm();
+  }
+
+  _Fc.setConstant(0.0f);
+
+  std::cerr << "vd after scaling: " << _vd.norm() << " distance: " << _normalDistance << " v: " << _v.segment(0,3).norm() <<std::endl;
 }

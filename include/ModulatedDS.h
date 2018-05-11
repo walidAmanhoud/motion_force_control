@@ -149,6 +149,7 @@ class ModulatedDS
 		bool _optitrackOK;
 		bool _wrenchBiasOK;
   		bool _stop;
+  		bool _ensurePassivity;
 
     // Optitrack 
     Eigen::Matrix<float,3,TOTAL_NB_MARKERS> _markersPosition;
@@ -194,6 +195,7 @@ class ModulatedDS
 		float _gammap;
 		float _ut;
 		float _vt;
+		float _dW;
 	public:
 
 		// Class constructor
@@ -224,6 +226,7 @@ class ModulatedDS
 		void updateTankScalars();
 
 		void forceModulation();
+		void forceModulation2();
 
 		void computeDesiredOrientation();
     
