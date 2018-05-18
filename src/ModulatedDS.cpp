@@ -1,4 +1,5 @@
 #include "ModulatedDS.h"
+#include "Utils.h"
 
 ModulatedDS* ModulatedDS::me = NULL;
 
@@ -46,8 +47,8 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
   // _contactAttractor << -0.55f, 0.0f, -0.007f;
   _p << 0.0f,0.0f,-0.007f;
 
-  _taskAttractor << -0.65f, 0.0f, -0.007f;
-  _contactAttractor << -0.65f, 0.0f, -0.007f;
+  _taskAttractor << -0.65f, 0.05f, -0.007f;
+  _contactAttractor << -0.65f, 0.05f, -0.007f;
   // _p << 0.0f,0.0f,-0.007f;
   
   _planeNormal << 0.0f, 0.0f, 1.0f;
@@ -71,7 +72,7 @@ ModulatedDS::ModulatedDS(ros::NodeHandle &n, double frequency, std::string fileN
   _firstOptitrackP2Pose = false;
   _firstOptitrackP3Pose = false;
   _optitrackOK = false;
-  _ensurePassivity = false;
+  _ensurePassivity = true;
 
   _averageCount = 0;
 
@@ -650,7 +651,7 @@ void ModulatedDS::rotatingDynamics()
       else
       {
         u/=u.norm();
-        K = getSkewSymmetricMatrix(u);
+        K = Utils::getSkewSymmetricMatrix(u);
         R = Eigen::Matrix3f::Identity()+std::sin(theta)*K+(1.0f-std::cos(theta))*K*K;
       }
       _vdR = R*_vdOrig;
@@ -679,7 +680,7 @@ void ModulatedDS::updateTankScalars()
   float dz = 0.01f;
   float ds = 0.1f*_smax;
 
-  _alpha = smoothFall(_s,_smax-0.1f*_smax,_smax);
+  _alpha = Utils::smoothFall(_s,_smax-0.1f*_smax,_smax);
   _ut = _v.dot(_vdR);
   if(_s < 0.0f && _ut < 0.0f)
   {
@@ -735,12 +736,13 @@ void ModulatedDS::forceModulation()
 
   if(_normalForce<3.0f)
   {
-    _Fd = 5.0f/_lambda1;
+    _Fd = 5.0f;
   }
   else
   {
     // _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;
-    _Fd = _targetForce*smoothFall(_normalDistance,0.02f,0.1f)/_lambda1;
+    // _Fd = _targetForce*smoothFall(_normalDistance,0.02f,0.1f)/_lambda1;
+    _Fd = _targetForce;
     // smoothFall(_distance,0.02f,0.1f)    
     // _Fd = (_targetForce*(1.0-f-std::tanh(100.0f*_normalDistance))+_integratorGain*(_targetForce*(1.0f-std::tanh(100.0f*_normalDistance))+(_wRb*_filteredWrench.segment(0,3)).dot(_e1)))/_lambda1;    
 
@@ -752,7 +754,7 @@ void ModulatedDS::forceModulation()
     _Fd*=_gammap;
   }
 
-  float delta = std::pow(2.0f*_e1.dot(_vdR)*_Fd,2.0f)+4.0f*std::pow(_vdR.norm(),4.0f); 
+  float delta = std::pow(2.0f*_e1.dot(_vdR)*_Fd/_lambda1,2.0f)+4.0f*std::pow(_vdR.norm(),4.0f); 
 
   float la;
 
@@ -762,7 +764,7 @@ void ModulatedDS::forceModulation()
   }
   else
   {
-    la = (-2.0f*_e1.dot(_vdR)*_Fd+sqrt(delta))/(2.0f*std::pow(_vdR.norm(),2.0f));
+    la = (-2.0f*_e1.dot(_vdR)*_Fd/_lambda1+sqrt(delta))/(2.0f*std::pow(_vdR.norm(),2.0f));
   }
   
   if(_ensurePassivity && _s < 0.0f && _ut < 0.0f)
@@ -793,14 +795,13 @@ void ModulatedDS::forceModulation()
 
   _dW = _lambda1*(la-1.0f)*(1-_beta)*_ut+_Fd*(_gammap-_gamma)*_vt-(1-_alpha)*_v.transpose()*_D*_v;
 
-
   if(_ensurePassivity)
   {
-    _vd = la*_vdR+_gammap*_Fd*_e1;
+    _vd = la*_vdR+_gammap*_Fd*_e1/_lambda1;
   }
   else
   {
-    _vd = la*_vdR+_Fd*_e1;
+    _vd = la*_vdR+_Fd*_e1/_lambda1;
   }
 
 
@@ -829,7 +830,7 @@ void ModulatedDS::computeDesiredOrientation()
   k /= s;
   
   Eigen::Matrix3f K;
-  K << getSkewSymmetricMatrix(k);
+  K << Utils::getSkewSymmetricMatrix(k);
 
   Eigen::Matrix3f Re;
   if(fabs(s)< FLT_EPSILON)
@@ -844,20 +845,20 @@ void ModulatedDS::computeDesiredOrientation()
   // Convert rotation error into axis angle representation
   Eigen::Vector3f omega;
   float angle;
-  Eigen::Vector4f qtemp = rotationMatrixToQuaternion(Re);
-  quaternionToAxisAngle(qtemp,omega,angle);
+  Eigen::Vector4f qtemp = Utils::rotationMatrixToQuaternion(Re);
+  Utils::quaternionToAxisAngle(qtemp,omega,angle);
 
   // Compute final quaternion on plane
-  Eigen::Vector4f qf = quaternionProduct(qtemp,_q);
+  Eigen::Vector4f qf = Utils::quaternionProduct(qtemp,_q);
 
   // Perform quaternion slerp interpolation to progressively orient the end effector while approaching the plane
-  _qd = slerpQuaternion(_q,qf,1.0f-std::tanh(5.0f*_normalDistance));
+  _qd = Utils::slerpQuaternion(_q,qf,1.0f-std::tanh(5.0f*_normalDistance));
 
   // Compute needed angular velocity to perform the desired quaternion
   Eigen::Vector4f qcurI, wq;
   qcurI(0) = _q(0);
   qcurI.segment(1,3) = -_q.segment(1,3);
-  wq = 5.0f*quaternionProduct(qcurI,_qd-_q);
+  wq = 5.0f*Utils::quaternionProduct(qcurI,_qd-_q);
   Eigen::Vector3f omegaTemp = _wRb*wq.segment(1,3);
   _omegad = omegaTemp; 
   // _omegad.setConstant(0.0f);
@@ -892,7 +893,15 @@ void ModulatedDS::logData()
                 << _normalDistance << " "
                 << _normalForce << " "
                 << _Fd*_lambda1 << " "
-                << _sequenceID << std::endl;
+                << _sequenceID << " "
+                << (int) _ensurePassivity << " "
+                << _s << " " 
+                << _alpha << " "
+                << _beta << " "
+                << _betap << " "
+                << _gamma << " "
+                << _gammap << " "
+                << _dW << " " << std::endl;
 }
 
 
@@ -950,14 +959,12 @@ void ModulatedDS::publishData()
   R.col(0) = u;
   R.col(1) = v;
   R.col(2) = n;
-  Eigen::Vector4f q = rotationMatrixToQuaternion(R);
-
+  Eigen::Vector4f q = Utils::rotationMatrixToQuaternion(R);
 
   _msgMarker.pose.orientation.x = q(1);
   _msgMarker.pose.orientation.y = q(2);
   _msgMarker.pose.orientation.z = q(3);
   _msgMarker.pose.orientation.w = q(0);
-
 
   _pubMarker.publish(_msgMarker);
 
@@ -1007,7 +1014,7 @@ void ModulatedDS::updateRobotPose(const geometry_msgs::Pose::ConstPtr& msg)
   // Update end effecotr pose (position+orientation)
   _x << _msgRealPose.position.x, _msgRealPose.position.y, _msgRealPose.position.z;
   _q << _msgRealPose.orientation.w, _msgRealPose.orientation.x, _msgRealPose.orientation.y, _msgRealPose.orientation.z;
-  _wRb = quaternionToRotationMatrix(_q);
+  _wRb = Utils::quaternionToRotationMatrix(_q);
   _x = _x+_toolOffset*_wRb.col(2);
 
   if((_x-temp).norm()>FLT_EPSILON)
@@ -1169,6 +1176,7 @@ void ModulatedDS::updateDampingMatrix(const std_msgs::Float32MultiArray::ConstPt
         msg->data[6],msg->data[7],msg->data[8];
 }
 
+
 uint16_t ModulatedDS::checkTrackedMarker(float a, float b)
 {
   if(fabs(a-b)< FLT_EPSILON)
@@ -1179,160 +1187,6 @@ uint16_t ModulatedDS::checkTrackedMarker(float a, float b)
   {
     return 1;
   }
-}
-
-
-Eigen::Vector4f ModulatedDS::quaternionProduct(Eigen::Vector4f q1, Eigen::Vector4f q2)
-{
-  Eigen::Vector4f q;
-  q(0) = q1(0)*q2(0)-(q1.segment(1,3)).dot(q2.segment(1,3));
-  Eigen::Vector3f q1Im = (q1.segment(1,3));
-  Eigen::Vector3f q2Im = (q2.segment(1,3));
-  q.segment(1,3) = q1(0)*q2Im+q2(0)*q1Im+q1Im.cross(q2Im);
-
-  return q;
-}
-
-
-Eigen::Matrix3f ModulatedDS::getSkewSymmetricMatrix(Eigen::Vector3f input)
-{
-  Eigen::Matrix3f output;
-
-  output << 0.0f, -input(2), input(1),
-            input(2), 0.0f, -input(0),
-            -input(1), input(0), 0.0f;
-
-  return output;
-}
-
-
-Eigen::Vector4f ModulatedDS::rotationMatrixToQuaternion(Eigen::Matrix3f R)
-{
-  Eigen::Vector4f q;
-
-  float r11 = R(0,0);
-  float r12 = R(0,1);
-  float r13 = R(0,2);
-  float r21 = R(1,0);
-  float r22 = R(1,1);
-  float r23 = R(1,2);
-  float r31 = R(2,0);
-  float r32 = R(2,1);
-  float r33 = R(2,2);
-
-
-  float tr = r11+r22+r33;
-  float tr1 = r11-r22-r33;
-  float tr2 = -r11+r22-r33;
-  float tr3 = -r11-r22+r33;
-
-  if(tr>0)
-  {  
-    q(0) = sqrt(1.0f+tr)/2.0f;
-    q(1) = (r32-r23)/(4.0f*q(0));
-    q(2) = (r13-r31)/(4.0f*q(0));
-    q(3) = (r21-r12)/(4.0f*q(0));
-  }
-  else if((tr1>tr2) && (tr1>tr3))
-  {
-    q(1) = sqrt(1.0f+tr1)/2.0f;
-    q(0) = (r32-r23)/(4.0f*q(1));
-    q(2) = (r21+r12)/(4.0f*q(1));
-    q(3) = (r31+r13)/(4.0f*q(1));
-  }     
-  else if((tr2>tr1) && (tr2>tr3))
-  {   
-    q(2) = sqrt(1.0f+tr2)/2.0f;
-    q(0) = (r13-r31)/(4.0f*q(2));
-    q(1) = (r21+r12)/(4.0f*q(2));
-    q(3) = (r32+r23)/(4.0f*q(2));
-  }
-  else
-  {
-    q(3) = sqrt(1.0f+tr3)/2.0f;
-    q(0) = (r21-r12)/(4.0f*q(3));
-    q(1) = (r31+r13)/(4.0f*q(3));
-    q(2) = (r32+r23)/(4.0f*q(3));        
-  }
-
-  return q;
-}
-
-
-Eigen::Matrix3f ModulatedDS::quaternionToRotationMatrix(Eigen::Vector4f q)
-{
-  Eigen::Matrix3f R;
-
-  float q0 = q(0);
-  float q1 = q(1);
-  float q2 = q(2);
-  float q3 = q(3);
-
-  R(0,0) = q0*q0+q1*q1-q2*q2-q3*q3;
-  R(1,0) = 2.0f*(q1*q2+q0*q3);
-  R(2,0) = 2.0f*(q1*q3-q0*q2);
-
-  R(0,1) = 2.0f*(q1*q2-q0*q3);
-  R(1,1) = q0*q0-q1*q1+q2*q2-q3*q3;
-  R(2,1) = 2.0f*(q2*q3+q0*q1);
-
-  R(0,2) = 2.0f*(q1*q3+q0*q2);
-  R(1,2) = 2.0f*(q2*q3-q0*q1);
-  R(2,2) = q0*q0-q1*q1-q2*q2+q3*q3;  
-
-  return R;
-}
-
-
-void ModulatedDS::quaternionToAxisAngle(Eigen::Vector4f q, Eigen::Vector3f &axis, float &angle)
-{
-  if((q.segment(1,3)).norm() < 1e-3f)
-  {
-    axis = q.segment(1,3);
-  }
-  else
-  {
-    axis = q.segment(1,3)/(q.segment(1,3)).norm();
-    
-  }
-
-  angle = 2*std::acos(q(0));
-}
-
-
-Eigen::Vector4f ModulatedDS::slerpQuaternion(Eigen::Vector4f q1, Eigen::Vector4f q2, float t)
-{
-
-  Eigen::Vector4f q;
-
-  // Change sign of q2 if dot product of the two quaterion is negative => allows to interpolate along the shortest path
-  if(q1.dot(q2)<0.0f)
-  {   
-    q2 = -q2;
-  }
-
-  float dotProduct = q1.dot(q2);
-  if(dotProduct > 1.0f)
-  {
-    dotProduct = 1.0f;
-  }
-  else if(dotProduct < -1.0f)
-  {
-    dotProduct = -1.0f;
-  }
-
-  float omega = acos(dotProduct);
-
-  if(std::fabs(omega)<FLT_EPSILON)
-  {
-    q = q1.transpose()+t*(q2-q1).transpose();
-  }
-  else
-  {
-    q = (std::sin((1-t)*omega)*q1+std::sin(t*omega)*q2)/std::sin(omega);
-  }
-
-  return q;
 }
 
 
@@ -1349,35 +1203,6 @@ void ModulatedDS::dynamicReconfigureCallback(motion_force_control::modulatedDS_p
   _offset(1) = config.yOffset;
   _offset(2) = config.zOffset;
   _integrator.setConstant(0.0f);
-}
-
-float ModulatedDS::smoothRise(float x, float a, float b)
-{
-  float y; 
-  if(x<a)
-  {
-    y = 0.0f;
-  }
-  else if(x>b)
-  {
-    y = 1.0f;
-  }
-  else
-  {
-    y = (1.0f+sin(M_PI*(x-a)/(b-a)-M_PI/2.0f))/2.0f;
-  }
-
-  return y;
-}
-
-float ModulatedDS::smoothFall(float x, float a, float b)
-{
-  return 1.0f-smoothRise(x,a,b);
-}
-
-float ModulatedDS::smoothRiseFall(float x, float a, float b, float c, float d)
-{
-  return smoothRise(x,a,b)*smoothFall(x,c,d);
 }
 
 
@@ -1410,13 +1235,14 @@ void ModulatedDS::forceModulation2()
     _lambda1 = 1.0f;
   }
 
-  if((-_wRb*_filteredWrench.segment(0,3)).dot(_e1)<2.0f)
+  if((-_wRb*_filteredWrench.segment(0,3)).dot(_e1)<3.0f)
   {
     _Fd = 5.0f/_lambda1;
   }
   else
   {
-    _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;    
+    // _Fd = _targetForce*(1.0f-std::tanh(100.0f*_normalDistance))/_lambda1;    
+    _Fd = _targetForce/_lambda1;    
     // _Fd = (_targetForce*(1.0f-std::tanh(100.0f*_normalDistance))+_integratorGain*(_targetForce*(1.0f-std::tanh(100.0f*_normalDistance))+(_wRb*_filteredWrench.segment(0,3)).dot(_e1)))/_lambda1;    
 
   }

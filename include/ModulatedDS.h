@@ -209,10 +209,8 @@ class ModulatedDS
 
 	private:
 		
-	static void stopNode(int sig);
+		static void stopNode(int sig);
 
-
-		
     void computeCommand();
 
 		void computeProjectionOnSurface();
@@ -226,6 +224,7 @@ class ModulatedDS
 		void updateTankScalars();
 
 		void forceModulation();
+
 		void forceModulation2();
 
 		void computeDesiredOrientation();
@@ -242,18 +241,6 @@ class ModulatedDS
 
     void updateRobotWrench(const geometry_msgs::WrenchStamped::ConstPtr& msg);
 
-    Eigen::Vector4f quaternionProduct(Eigen::Vector4f q1, Eigen::Vector4f q2);
-
-    Eigen::Matrix3f getSkewSymmetricMatrix(Eigen::Vector3f input);
-
-    Eigen::Vector4f rotationMatrixToQuaternion(Eigen::Matrix3f R);
-
-  	Eigen::Matrix3f quaternionToRotationMatrix(Eigen::Vector4f q);
-
-		void quaternionToAxisAngle(Eigen::Vector4f q, Eigen::Vector3f &axis, float &angle);
-
-  	Eigen::Vector4f slerpQuaternion(Eigen::Vector4f q1, Eigen::Vector4f q2, float t);
-
 		void updateOptitrackRobotPose(const geometry_msgs::PoseStamped::ConstPtr& msg);
 
 		void updateOptitrackP1Pose(const geometry_msgs::PoseStamped::ConstPtr& msg);
@@ -267,13 +254,6 @@ class ModulatedDS
 		uint16_t checkTrackedMarker(float a, float b);
 
     void dynamicReconfigureCallback(motion_force_control::modulatedDS_paramsConfig &config, uint32_t level);
-
-    float smoothRise(float x, float a, float b);
-
-float smoothFall(float x, float a, float b);
-
-float smoothRiseFall(float x, float a, float b, float c, float d);
-
 };
 
 

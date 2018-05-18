@@ -484,7 +484,7 @@ void SurfaceLearning::processRawData()
                         velocity(0) >> velocity(1) >> velocity(2) >>
                         force(0) >> force(1) >> force(2) >> sequenceID;
 
-      if(force.norm()>3.0f)
+      if(force.norm()>3.0f && position(2) <= 0.1f)
       {
         surfaceData.push_back(position);
       }
