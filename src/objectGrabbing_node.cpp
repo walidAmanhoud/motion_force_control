@@ -1,8 +1,8 @@
 #include "ObjectGrabbing.h"
-#include <sstream>
 
 int main(int argc, char **argv)
 {
+
   ros::init(argc, argv, "objectGrabbing");
   ros::NodeHandle n;
   float frequency = 200.0f;
@@ -68,7 +68,6 @@ int main(int argc, char **argv)
   }
   else
   {
-   
     objectGrabbing.run();
   }
 

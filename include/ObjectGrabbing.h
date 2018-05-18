@@ -27,7 +27,7 @@
 #include "geometry_msgs/Twist.h"
 #include "std_msgs/Float32MultiArray.h"
 #include "sg_filter.h"
-
+#include "Workspace.h"
 
 #define NB_SAMPLES 50
 #define AVERAGE_COUNT 100
@@ -62,130 +62,104 @@ class ObjectGrabbing
 		ros::Publisher _pubDesiredWrench[NB_ROBOTS];				// Publish desired twist
 		ros::Publisher _pubFilteredWrench[NB_ROBOTS];
 		ros::Publisher _pubNormalForce[NB_ROBOTS];
-		ros::Publisher _pubMarker;
-		ros::Publisher _pubTaskAttractor;
-		
-		// Subsciber and publisher messages declaration
-		geometry_msgs::Pose _msgRealPose;
-		geometry_msgs::Pose _msgDesiredPose;
-		geometry_msgs::Quaternion _msgDesiredOrientation;
-		geometry_msgs::Twist _msgDesiredTwist;
-		geometry_msgs::Wrench _msgDesiredWrench;
-		visualization_msgs::Marker _msgMarker;
-		visualization_msgs::Marker _msgArrowMarker;
-
-		geometry_msgs::PointStamped _msgTaskAttractor;
-		geometry_msgs::WrenchStamped _msgFilteredWrench;
-		
-		// Tool variables
-		float _loadMass;
-		float _toolOffset;
-		Eigen::Vector3f _loadOffset;
-		Eigen::Vector3f _gravity;
-
-		// End effector state variables
-		Eigen::Vector3f _x[NB_ROBOTS];				// Current position [m] (3x1)
-		Eigen::Vector4f _q[NB_ROBOTS];				// Current end effector quaternion (4x1)
-		Eigen::Matrix3f _wRb[NB_ROBOTS];				// Current rotation matrix [m] (3x1)
-		Eigen::Vector3f _v[NB_ROBOTS];
-		Eigen::Vector3f _w[NB_ROBOTS];
-		Eigen::Matrix<float,6,1> _wrench[NB_ROBOTS];
-		Eigen::Matrix<float,6,1> _wrenchBias[NB_ROBOTS];
-		Eigen::Matrix<float,6,1> _filteredWrench[NB_ROBOTS];
-		int _wrenchCount[NB_ROBOTS];
-		float _filteredForceGain;
-
-		// End effector desired variables
-		Eigen::Vector4f _qd[NB_ROBOTS];				// Desired end effector quaternion (4x1)
-		Eigen::Vector3f _omegad[NB_ROBOTS];		// Desired angular velocity [rad/s] (3x1)
-		Eigen::Vector3f _xd[NB_ROBOTS];				// Desired position [m] (3x1)
-		Eigen::Vector3f _vd[NB_ROBOTS];				// Desired velocity [m/s] (3x1)
-		Eigen::Vector3f _vdOrig[NB_ROBOTS];
-		Eigen::Vector3f _vdR[NB_ROBOTS];
-		float _Fd[NB_ROBOTS];
-		float _targetForce;
-		float _targetVelocity;
-		float _velocityLimit;
-    Eigen::Vector3f _xC;
-    Eigen::Vector3f _xL;
-    Eigen::Vector3f _xoC;
-    Eigen::Vector3f _xoL;
-    Eigen::Vector3f _xdC;
-    Eigen::Vector3f _xdL;
-    Eigen::Vector3f _xdC0;
-    float _distance;
-
-		// Task variables
+    ros::Publisher _pubMarker;
+    ros::Publisher _pubTaskAttractor;
+    
+    // Subsciber and publisher messages declaration
+    geometry_msgs::Pose _msgRealPose;
+    geometry_msgs::Pose _msgDesiredPose;
+    geometry_msgs::Quaternion _msgDesiredOrientation;
+    geometry_msgs::Twist _msgDesiredTwist;
+    geometry_msgs::Wrench _msgDesiredWrench;
+    visualization_msgs::Marker _msgMarker;
+    visualization_msgs::Marker _msgArrowMarker;
+    geometry_msgs::PointStamped _msgTaskAttractor;
+    geometry_msgs::WrenchStamped _msgFilteredWrench;
+    
+    // Tool variables
+    float _loadMass;
+    float _toolOffset;
+    Eigen::Vector3f _loadOffset;
+    Eigen::Vector3f _gravity;
     Eigen::Vector3f _objectDim;
-    Eigen::Vector3f _contactAttractor;
-    Eigen::Vector3f _taskAttractor;
-    Eigen::Vector3f _e1[NB_ROBOTS];
-    Eigen::Vector3f _e2[NB_ROBOTS];
-    Eigen::Vector3f _e3[NB_ROBOTS];
-    Eigen::Vector3f _p;
-    Eigen::Vector3f _xProj;		
-    Eigen::Vector3f _xAttractor;  
-    float _vInit; 
-    float _normalDistance[NB_ROBOTS];
-    float _normalForce[NB_ROBOTS];
-    double _duration;
-    double _timeInit;
-    Eigen::Vector3f _offset;
 
-		// Control variables
-    float _convergenceRate;       // Convergence rate of the DS
-    float _grabbingForceThreshold;       // Convergence rate of the DS
-		Eigen::Vector3f _Fc[NB_ROBOTS];
-		Eigen::Vector3f _Tc[NB_ROBOTS];
-		
+    // End effector state variables
+    Eigen::Vector3f _x[NB_ROBOTS];        // Current position [m] (3x1)
+    Eigen::Vector4f _q[NB_ROBOTS];        // Current end effector quaternion (4x1)
+    Eigen::Matrix3f _wRb[NB_ROBOTS];        // Current rotation matrix [m] (3x1)
+    Eigen::Vector3f _v[NB_ROBOTS];
+    Eigen::Vector3f _w[NB_ROBOTS];
+    Eigen::Matrix<float,6,1> _wrench[NB_ROBOTS];
+    Eigen::Matrix<float,6,1> _wrenchBias[NB_ROBOTS];
+    Eigen::Matrix<float,6,1> _filteredWrench[NB_ROBOTS];
+    int _wrenchCount[NB_ROBOTS];
+
+    // End effector desired variables
+    Eigen::Vector4f _qd[NB_ROBOTS];       // Desired end effector quaternion (4x1)
+    Eigen::Vector4f _qdPrev[NB_ROBOTS];       // Desired end effector quaternion (4x1)
+    Eigen::Vector3f _omegad[NB_ROBOTS];   // Desired angular velocity [rad/s] (3x1)
+    Eigen::Vector3f _xd[NB_ROBOTS];       // Desired position [m] (3x1)
+    Eigen::Vector3f _vd[NB_ROBOTS];       // Desired velocity [m/s] (3x1)
+    Eigen::Vector3f _vdOrig[NB_ROBOTS];
+    Eigen::Vector3f _vdR[NB_ROBOTS];
+    float _Fd[NB_ROBOTS];
+    float _normalForce[NB_ROBOTS];
+    Eigen::Vector3f _Fc[NB_ROBOTS];
+    Eigen::Vector3f _Tc[NB_ROBOTS];
+    Eigen::Vector3f _e1[NB_ROBOTS];
+
+    // Task variables
+    Eigen::Vector3f _taskAttractor;
+    float _targetForce;
+    float _targetVelocity;
+    Eigen::Vector3f _xC;
+    Eigen::Vector3f _xD;
+    Eigen::Vector3f _xoC;
+    Eigen::Vector3f _xoD;
+    Eigen::Vector3f _xdC;
+    Eigen::Vector3f _xdD;
+    Eigen::Vector3f _vdC;
+    Eigen::Vector3f _vdD;
+    float _eD;
+    float _eoD;
+    float _eC;
+    float _eoC;
+    
     // Booleans
-		bool _firstRobotPose[NB_ROBOTS];	// Monitor the first robot pose update
-		bool _firstRobotTwist[NB_ROBOTS];	// Monitor the first robot pose update
-		bool _firstWrenchReceived[NB_ROBOTS];
+    bool _firstRobotPose[NB_ROBOTS];  // Monitor the first robot pose update
+    bool _firstRobotTwist[NB_ROBOTS]; // Monitor the first robot pose update
+    bool _firstWrenchReceived[NB_ROBOTS];
     bool _firstOptitrackPose[TOTAL_NB_MARKERS];
-		bool _firstDampingMatrix[NB_ROBOTS];
-		bool _optitrackOK;
-		bool _wrenchBiasOK[NB_ROBOTS];
+    bool _firstDampingMatrix[NB_ROBOTS];
+    bool _optitrackOK;
+    bool _wrenchBiasOK[NB_ROBOTS];
     bool _moveToAttractor;
-		bool _stop;
+    bool _stop;
     bool _objectGrabbed;
     bool _firstObjectPose;
+    bool _ensurePassivity;
+    bool _objectReachable;
 
     // Optitrack 
     Eigen::Matrix<float,3,TOTAL_NB_MARKERS> _markersPosition;
     Eigen::Matrix<float,3,TOTAL_NB_MARKERS> _markersPosition0;
     Eigen::Matrix<uint32_t,TOTAL_NB_MARKERS,1> _markersSequenceID;
     Eigen::Matrix<uint16_t,TOTAL_NB_MARKERS,1> _markersTracked;
-		Eigen::Vector3f _p1;
-		Eigen::Vector3f _p2;
-		Eigen::Vector3f _p3;
-		Eigen::Vector3f _p4;
-		Eigen::Vector3f _leftRobotOrigin;
+    Eigen::Vector3f _p1;
+    Eigen::Vector3f _p2;
+    Eigen::Vector3f _p3;
+    Eigen::Vector3f _p4;
+    Eigen::Vector3f _leftRobotOrigin;
 
-		// Eigen value of passive ds controller
-		float _lambda1[NB_ROBOTS];
+    // Eigen value of passive ds controller
+    float _lambda1[NB_ROBOTS];
 
-		// Other variables
-		uint32_t _sequenceID;
-		uint32_t _averageCount = 0;
+    // Other variables
+    uint32_t _sequenceID;
+    uint32_t _averageCount = 0;
 
-		static ObjectGrabbing* me;
-		std::mutex _mutex;
-
-    Eigen::Vector3f omegaPrev[NB_ROBOTS];
-    float anglePrev[NB_ROBOTS];
-    Eigen::Vector4f qdPrev[NB_ROBOTS];
-    Eigen::Vector4f qfPrev[NB_ROBOTS];
-
-		// Dynamic reconfigure (server+callback)
-		dynamic_reconfigure::Server<motion_force_control::objectGrabbing_paramsConfig> _dynRecServer;
-		dynamic_reconfigure::Server<motion_force_control::objectGrabbing_paramsConfig>::CallbackType _dynRecCallback;
-
-		std::ifstream _inputFile;
-		std::ofstream _outputFile;
-
-		// Tank parameters
-		Eigen::Matrix3f _D[NB_ROBOTS];
+    // Tank parameters
+    Eigen::Matrix3f _D[NB_ROBOTS];
     float _s[NB_ROBOTS];
     float _smax;
     float _alpha[NB_ROBOTS];
@@ -196,34 +170,35 @@ class ObjectGrabbing
     float _ut[NB_ROBOTS];
     float _vt[NB_ROBOTS];
     float _dW[NB_ROBOTS];
+  
+    float _convergenceRate;
+    float _filteredForceGain;
+    float _velocityLimit;
+    float _grabbingForceThreshold;
+    Eigen::Vector3f _offset;
 
+    static ObjectGrabbing* me;
+    std::mutex _mutex;
+
+    Workspace _workspace;
 
     SGF::SavitzkyGolayFilter _xCFilter;
     SGF::SavitzkyGolayFilter _xLFilter;
-    SGF::SavitzkyGolayFilter _qdLFilter;
-    SGF::SavitzkyGolayFilter _qdRFilter;
 
     ContactDynamics _contactDynamics;
-
-    Eigen::Vector3f _vdC;
-
-    bool _ensurePassivity;
-
+    
     std::string _filename;
+    std::ifstream _inputFile;
+    std::ofstream _outputFile;
+
+    // Dynamic reconfigure (server+callback)
+    dynamic_reconfigure::Server<motion_force_control::objectGrabbing_paramsConfig> _dynRecServer;
+    dynamic_reconfigure::Server<motion_force_control::objectGrabbing_paramsConfig>::CallbackType _dynRecCallback;
 
 
-		// float _s;
-		// float _smax;
-		// float _alpha;
-		// float _beta;
-		// float _betap;
-		// float _gamma;
-		// float _gammap;
-		// float _ut;
-		// float _vt;
-	public:
+  public:
 
-		// Class constructor
+    // Class constructor
 		ObjectGrabbing(ros::NodeHandle &n, double frequency, std::string filename, ContactDynamics contactDynamics, float targetVelocity, float targetForce);
 
 		bool init();
@@ -235,6 +210,8 @@ class ObjectGrabbing
 		static void stopNode(int sig);
 
     void computeObjectPose();
+
+    void isObjectReachable();
 		
     void computeCommand();
 
@@ -244,13 +221,9 @@ class ObjectGrabbing
 
 		void computeOriginalDynamics();
 
-		void rotatingDynamics();
-
 		void updateTankScalars();
 
 		void forceModulation();
-
-    void forceModulation2();
 
 		void computeDesiredOrientation();
     
@@ -272,26 +245,7 @@ class ObjectGrabbing
 		
     void optitrackInitialization();
 
-    Eigen::Vector4f quaternionProduct(Eigen::Vector4f q1, Eigen::Vector4f q2);
-
-    Eigen::Matrix3f getSkewSymmetricMatrix(Eigen::Vector3f input);
-
-    Eigen::Vector4f rotationMatrixToQuaternion(Eigen::Matrix3f R);
-
-  	Eigen::Matrix3f quaternionToRotationMatrix(Eigen::Vector4f q);
-
-		void quaternionToAxisAngle(Eigen::Vector4f q, Eigen::Vector3f &axis, float &angle);
-
-  	Eigen::Vector4f slerpQuaternion(Eigen::Vector4f q1, Eigen::Vector4f q2, float t);
-
     void dynamicReconfigureCallback(motion_force_control::objectGrabbing_paramsConfig &config, uint32_t level);
-
-    float smoothRise(float x, float a, float b);
-
-		float smoothFall(float x, float a, float b);
-
-		float smoothRiseFall(float x, float a, float b, float c, float d);
-
 };
 
 

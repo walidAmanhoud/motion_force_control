@@ -17,7 +17,7 @@ find_package(catkin REQUIRED COMPONENTS
   foot_interfaces
   svm_grad
   sg_differentiation
-
+  utils
 )
 
 # add_message_files(
@@ -41,7 +41,7 @@ generate_dynamic_reconfigure_options(cfg/unifiedMotionForceController_params.cfg
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES ${PROJECT_NAME} passive_ds_force_controller
-  CATKIN_DEPENDS roscpp rospy std_msgs message_generation kdl_parser dynamic_reconfigure foot_interfaces svm_grad sg_differentiation
+  CATKIN_DEPENDS roscpp rospy std_msgs message_generation kdl_parser dynamic_reconfigure foot_interfaces svm_grad sg_differentiation utils
 
   # DEPENDS Eigen
  )
@@ -74,7 +74,7 @@ add_executable(surfaceLearning src/surfaceLearning_node.cpp src/SurfaceLearning.
 target_link_libraries(surfaceLearning ${catkin_LIBRARIES})
 add_dependencies(surfaceLearning ${PROJECT_NAME}_gencpp)
 
-add_executable(objectGrabbing src/objectGrabbing_node.cpp src/ObjectGrabbing.cpp)
+add_executable(objectGrabbing src/objectGrabbing_node.cpp src/ObjectGrabbing.cpp src/Workspace.cpp)
 target_link_libraries(objectGrabbing ${catkin_LIBRARIES})
 add_dependencies(objectGrabbing ${PROJECT_NAME}_gencpp)
 
