@@ -1,12 +1,13 @@
 #include "MoveToDesiredPose.h"
+#include "Utils.h"
 #include <boost/bind.hpp>
 
 MoveToDesiredPose* MoveToDesiredPose::me = NULL;
 
-MoveToDesiredPose::MoveToDesiredPose(ros::NodeHandle &n, float frequency, bool bimanual):
+MoveToDesiredPose::MoveToDesiredPose(ros::NodeHandle &n, float frequency, Mode mode):
 	_n(n),
   _loopRate(frequency),
-  _bimanual(bimanual)
+  _mode(mode)
 {
 
 	ROS_INFO_STREAM("The move to desired joints node is created at: " << _n.getNamespace() << " with freq: " << frequency << "Hz.");
@@ -17,7 +18,7 @@ bool MoveToDesiredPose::init()
 {
   me = this;
 
-  for(int k = 0; k < 2; k++)
+  for(int k = 0; k < NB_ROBOTS; k++)
   {  
     _x[k].setConstant(0.0f);
     _q[k].setConstant(0.0f);
@@ -28,25 +29,27 @@ bool MoveToDesiredPose::init()
     _firstRealPoseReceived[k] = false;
   }
 
-  if(!_bimanual)
+  if(_mode == SINGLE_LEFT)
+  {
+    _firstRealPoseReceived[RIGHT] = true; 
+    std::cerr <<"bou2" << std::endl;
+  }
+  else if(_mode == SINGLE_RIGHT)
   {
     _firstRealPoseReceived[LEFT] = true;
   }
 
   _stop = false;
-  _toolOffset = 0.14f;
+  _toolOffset = 0.15f;
 
 
   _subRealPose[RIGHT] = _n.subscribe<geometry_msgs::Pose>("/lwr/ee_pose", 1,boost::bind(&MoveToDesiredPose::updateRealPose,this,_1,RIGHT),ros::VoidPtr(),ros::TransportHints().reliable().tcpNoDelay());
   _pubDesiredTwist[RIGHT] = _n.advertise<geometry_msgs::Twist>("/lwr/joint_controllers/passive_ds_command_vel", 1);
   _pubDesiredOrientation[RIGHT] = _n.advertise<geometry_msgs::Quaternion>("/lwr/joint_controllers/passive_ds_command_orient", 1);
 
-  if(_bimanual)
-  {
-    _subRealPose[LEFT] = _n.subscribe<geometry_msgs::Pose>("/lwr2/ee_pose", 1, boost::bind(&MoveToDesiredPose::updateRealPose,this,_1,LEFT),ros::VoidPtr(),ros::TransportHints().reliable().tcpNoDelay());
-    _pubDesiredTwist[LEFT] = _n.advertise<geometry_msgs::Twist>("/lwr2/joint_controllers/passive_ds_command_vel", 1);
-    _pubDesiredOrientation[LEFT] = _n.advertise<geometry_msgs::Quaternion>("/lwr2/joint_controllers/passive_ds_command_orient", 1);
-  }
+  _subRealPose[LEFT] = _n.subscribe<geometry_msgs::Pose>("/lwr2/ee_pose", 1, boost::bind(&MoveToDesiredPose::updateRealPose,this,_1,LEFT),ros::VoidPtr(),ros::TransportHints().reliable().tcpNoDelay());
+  _pubDesiredTwist[LEFT] = _n.advertise<geometry_msgs::Twist>("/lwr2/joint_controllers/passive_ds_command_vel", 1);
+  _pubDesiredOrientation[LEFT] = _n.advertise<geometry_msgs::Quaternion>("/lwr2/joint_controllers/passive_ds_command_orient", 1);
 
 
   signal(SIGINT,MoveToDesiredPose::stopNode);
@@ -97,8 +100,8 @@ void MoveToDesiredPose::run() {
   _omegad[RIGHT].setConstant(0.0f);
   _qd[RIGHT] = _q[RIGHT];
 
-
   publishData();
+
   ros::spinOnce();
   _loopRate.sleep();
 
@@ -121,25 +124,29 @@ void MoveToDesiredPose::setDesiredPose(Eigen::Vector3f desiredPosition)
 
 void MoveToDesiredPose::computeCommand() 
 {
-  _vd[RIGHT] = 3.0f*(_xd[RIGHT]-_x[RIGHT]);
-  _omegad[RIGHT].setConstant(0.0f);
 
-  // std::cerr << "RIGHT: " <<_x.transpose() << std::endl;
-  // std::cerr << "LEFT: " <<_x.transpose() << std::endl;
-
-  // Bound desired velocity  
-  if(_vd[RIGHT].norm()>0.2f)
+  if(_mode == SINGLE_RIGHT)
   {
-    _vd[RIGHT] *= 0.2f/_vd[RIGHT].norm();
+    _vd[RIGHT] = 3.0f*(_xd[RIGHT]-_x[RIGHT]);
+  }
+  else if(_mode == SINGLE_LEFT)
+  {
+    _vd[LEFT] = 3.0f*(_xd[LEFT]-_x[LEFT]);
+  }
+  else if (_mode == BOTH)
+  {
+    for(int k = 0; k < NB_ROBOTS; k++)
+    {
+      _vd[k] = 3.0*(_xd[k]-_x[k]);
+    }
   }
 
-  _vd[LEFT] = 3.0f*(_xd[LEFT]-_x[LEFT]);
-  _omegad[LEFT].setConstant(0.0f);
-
-  // Bound desired velocity  
-  if(_vd[LEFT].norm()>0.2f)
+  for(int k = 0; k < NB_ROBOTS; k++)
   {
-    _vd[LEFT] *= 0.2f/_vd[LEFT].norm();
+    if(_vd[k].norm()>0.2f)
+    {
+      _vd[k] *= 0.2f/_vd[k].norm();
+    }
   }
 }
 
@@ -158,7 +165,6 @@ void MoveToDesiredPose::publishData()
   _msgDesiredTwist.angular.y = _omegad[RIGHT](1);
   _msgDesiredTwist.angular.z = _omegad[RIGHT](2);
 
-  _pubDesiredTwist[RIGHT].publish(_msgDesiredTwist);
 
   // Publish desired orientation
   _msgDesiredOrientation.w = _qd[RIGHT](0);
@@ -166,27 +172,30 @@ void MoveToDesiredPose::publishData()
   _msgDesiredOrientation.y = _qd[RIGHT](2);
   _msgDesiredOrientation.z = _qd[RIGHT](3);
 
-  _pubDesiredOrientation[RIGHT].publish(_msgDesiredOrientation);
-
-  if(_bimanual)
+  if(_mode == BOTH || _mode == SINGLE_RIGHT)
   {
-    _msgDesiredTwist.linear.x  = _vd[LEFT](0);
-    _msgDesiredTwist.linear.y  = _vd[LEFT](1);
-    _msgDesiredTwist.linear.z  = _vd[LEFT](2);
+    _pubDesiredTwist[RIGHT].publish(_msgDesiredTwist);
+    _pubDesiredOrientation[RIGHT].publish(_msgDesiredOrientation);
+  }
 
-    // Convert desired end effector frame angular velocity to world frame
-    _msgDesiredTwist.angular.x = _omegad[LEFT](0);
-    _msgDesiredTwist.angular.y = _omegad[LEFT](1);
-    _msgDesiredTwist.angular.z = _omegad[LEFT](2);
+  _msgDesiredTwist.linear.x  = _vd[LEFT](0);
+  _msgDesiredTwist.linear.y  = _vd[LEFT](1);
+  _msgDesiredTwist.linear.z  = _vd[LEFT](2);
 
-    _pubDesiredTwist[LEFT].publish(_msgDesiredTwist);
+  // Convert desired end effector frame angular velocity to world frame
+  _msgDesiredTwist.angular.x = _omegad[LEFT](0);
+  _msgDesiredTwist.angular.y = _omegad[LEFT](1);
+  _msgDesiredTwist.angular.z = _omegad[LEFT](2);
 
-    // Publish desired orientation
-    _msgDesiredOrientation.w = _qd[LEFT](0);
-    _msgDesiredOrientation.x = _qd[LEFT](1);
-    _msgDesiredOrientation.y = _qd[LEFT](2);
-    _msgDesiredOrientation.z = _qd[LEFT](3);
+  // Publish desired orientation
+  _msgDesiredOrientation.w = _qd[LEFT](0);
+  _msgDesiredOrientation.x = _qd[LEFT](1);
+  _msgDesiredOrientation.y = _qd[LEFT](2);
+  _msgDesiredOrientation.z = _qd[LEFT](3);
 
+  if(_mode == BOTH || _mode == SINGLE_LEFT)
+  {
+   _pubDesiredTwist[LEFT].publish(_msgDesiredTwist);
     _pubDesiredOrientation[LEFT].publish(_msgDesiredOrientation);
   }
 }
@@ -197,38 +206,14 @@ void MoveToDesiredPose::updateRealPose(const geometry_msgs::Pose::ConstPtr& msg,
   // Update end effecotr pose (position+orientation)
   _x[k] << msg->position.x, msg->position.y, msg->position.z;
   _q[k] << msg->orientation.w, msg->orientation.x, msg->orientation.y, msg->orientation.z;
-  _wRb[k] = quaternionToRotationMatrix(_q[k]);
+  _wRb[k] = Utils::quaternionToRotationMatrix(_q[k]);
   _x[k] = _x[k]+_toolOffset*_wRb[k].col(2);
 
   if(!_firstRealPoseReceived[k])
   {
+  std::cerr << k << std::endl;
     _firstRealPoseReceived[k] = true;
     _qd[k] = _q[k];
     _vd[k].setConstant(0.0f);
   }
-}
-
-
-Eigen::Matrix3f MoveToDesiredPose::quaternionToRotationMatrix(Eigen::Vector4f q)
-{
-  Eigen::Matrix3f R;
-
-  float q0 = q(0);
-  float q1 = q(1);
-  float q2 = q(2);
-  float q3 = q(3);
-
-  R(0,0) = q0*q0+q1*q1-q2*q2-q3*q3;
-  R(1,0) = 2.0f*(q1*q2+q0*q3);
-  R(2,0) = 2.0f*(q1*q3-q0*q2);
-
-  R(0,1) = 2.0f*(q1*q2-q0*q3);
-  R(1,1) = q0*q0-q1*q1+q2*q2-q3*q3;
-  R(2,1) = 2.0f*(q2*q3+q0*q1);
-
-  R(0,2) = 2.0f*(q1*q3+q0*q2);
-  R(1,2) = 2.0f*(q2*q3-q0*q1);
-  R(2,2) = q0*q0-q1*q1-q2*q2+q3*q3;  
-
-  return R;
 }

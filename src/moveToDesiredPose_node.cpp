@@ -13,7 +13,7 @@ int main(int argc, char **argv)
   // Initialize desired position
   desiredPosition.setConstant(0.0f);
 
-  bool bimanual;
+  MoveToDesiredPose::Mode mode;
 
   // Check if desired position is specified with the command line
   if(argc == 4)
@@ -22,22 +22,31 @@ int main(int argc, char **argv)
     {
       desiredPosition(k) = atof(argv[k+1]);
     }
-    bimanual = false;
+    mode = MoveToDesiredPose::Mode::SINGLE_RIGHT;
   }
-  else if(argc == 5)
+  else if(argc == 6)
   {
     for(int k = 0; k < 3; k++)
     {
       desiredPosition(k) = atof(argv[k+1]);
     }
-
-    if(std::string(argv[4]) == "-bimanual")
+    
+    if(std::string(argv[4]) == "-m" && std::string(argv[5]) == "l")
     {
-      bimanual = true;
+      mode = MoveToDesiredPose::Mode::SINGLE_LEFT;
+    }
+    else if(std::string(argv[4]) == "-m" && std::string(argv[5]) == "r")
+    {
+      mode = MoveToDesiredPose::Mode::SINGLE_RIGHT;
+    }
+    else if(std::string(argv[4]) == "-m" && std::string(argv[5]) == "b")
+    {
+      mode = MoveToDesiredPose::Mode::BOTH;
     }
     else
     {
-      bimanual = false;
+      ROS_ERROR("Wrong mode arguments, the command line arguments should be: px py pz -m(mode) l(single left)/r(single right)/b(both)");
+      return 0;
     }
   }
 
@@ -45,7 +54,7 @@ int main(int argc, char **argv)
   ros::NodeHandle n;
   float frequency = 200.0f;
 
-  MoveToDesiredPose moveToDesiredPose(n,frequency,bimanual);
+  MoveToDesiredPose moveToDesiredPose(n,frequency,mode);
 
   if (!moveToDesiredPose.init()) 
   {
