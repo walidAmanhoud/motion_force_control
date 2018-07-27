@@ -96,6 +96,7 @@ class ObjectGrabbing
 
     // End effector desired variables
     Eigen::Vector4f _qd[NB_ROBOTS];       // Desired end effector quaternion (4x1)
+    Eigen::Vector4f _qinit[NB_ROBOTS];       // Desired end effector quaternion (4x1)
     Eigen::Vector4f _qdPrev[NB_ROBOTS];       // Desired end effector quaternion (4x1)
     Eigen::Vector3f _omegad[NB_ROBOTS];   // Desired angular velocity [rad/s] (3x1)
     Eigen::Vector3f _xd[NB_ROBOTS];       // Desired position [m] (3x1)
@@ -184,6 +185,7 @@ class ObjectGrabbing
 
     SGF::SavitzkyGolayFilter _xCFilter;
     SGF::SavitzkyGolayFilter _xLFilter;
+    SGF::SavitzkyGolayFilter _zDirFilter;
 
     ContactDynamics _contactDynamics;
     
