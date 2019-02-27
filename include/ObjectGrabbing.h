@@ -140,6 +140,7 @@ class ObjectGrabbing
     bool _firstObjectPose;
     bool _ensurePassivity;
     bool _objectReachable;
+    bool _goHome;
 
     // Optitrack 
     Eigen::Matrix<float,3,TOTAL_NB_MARKERS> _markersPosition;

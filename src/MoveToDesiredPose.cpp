@@ -148,6 +148,9 @@ void MoveToDesiredPose::computeCommand()
       _vd[k] *= 0.2f/_vd[k].norm();
     }
   }
+
+  // _qd[RIGHT] << 0.0f,0.0f,1.0f,0.0f;
+  // _qd[LEFT] << 0.0f,0.0f,1.0f,0.0f;
 }
 
 
@@ -206,7 +209,7 @@ void MoveToDesiredPose::updateRealPose(const geometry_msgs::Pose::ConstPtr& msg,
   // Update end effecotr pose (position+orientation)
   _x[k] << msg->position.x, msg->position.y, msg->position.z;
   _q[k] << msg->orientation.w, msg->orientation.x, msg->orientation.y, msg->orientation.z;
-  _wRb[k] = Utils::quaternionToRotationMatrix(_q[k]);
+  _wRb[k] = Utils<float>::quaternionToRotationMatrix(_q[k]);
   _x[k] = _x[k]+_toolOffset*_wRb[k].col(2);
 
   if(!_firstRealPoseReceived[k])
